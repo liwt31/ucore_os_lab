@@ -1,0 +1,13 @@
+# Lab 1
+
+
+
+## GCC options
+- -I indicates the first dir in which to find headers.
+- -fno-builtin do not use builtin functions (to prevent name collision).
+- -Wall enable all warnings.
+- -ggdb generate gdb debugging info.
+- -m32 target machine is using 32bit CPU.
+- -gstabs generate stabs debugging info.
+- -fno-stack-protector disable stack protector.
+

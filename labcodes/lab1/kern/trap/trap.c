@@ -169,8 +169,16 @@ trap_dispatch(struct trapframe *tf) {
         break;
     //LAB1 CHALLENGE 1 : YOUR CODE you should modify below codes.
     case T_SWITCH_TOU:
+        print_trapframe(tf);
+        cprintf("toU\n");
+        tf->tf_cs = GD_UTEXT + 3;
+        tf->tf_ss = tf->tf_es = tf->tf_ds = GD_UDATA + 3;
+        tf->tf_eflags |= FL_IOPL_MASK;
+        cprintf("%d\n", tf->tf_cs);
+        break;
     case T_SWITCH_TOK:
-        panic("T_SWITCH_** ??\n");
+        print_trapframe(tf);
+        cprintf("toK\n");
         break;
     case IRQ_OFFSET + IRQ_IDE1:
     case IRQ_OFFSET + IRQ_IDE2:

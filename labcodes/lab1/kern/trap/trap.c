@@ -166,19 +166,26 @@ trap_dispatch(struct trapframe *tf) {
     case IRQ_OFFSET + IRQ_KBD:
         c = cons_getc();
         cprintf("kbd [%03d] %c\n", c, c);
+        if ('3' == c){
+            goto t_switch_tou;
+        }
+        if ('0' == c){
+            goto t_switch_tok;
+        }
         break;
     //LAB1 CHALLENGE 1 : YOUR CODE you should modify below codes.
     case T_SWITCH_TOU:
-        print_trapframe(tf);
-        cprintf("toU\n");
-        tf->tf_cs = GD_UTEXT + 3;
-        tf->tf_ss = tf->tf_es = tf->tf_ds = GD_UDATA + 3;
+    t_switch_tou:
+        // Switch segment (also ring in cs)
+        tf->tf_cs = USER_CS;
+        tf->tf_ss = tf->tf_es = tf->tf_ds = USER_DS;
+        // enable IO in user ring
         tf->tf_eflags |= FL_IOPL_MASK;
-        cprintf("%d\n", tf->tf_cs);
         break;
     case T_SWITCH_TOK:
-        print_trapframe(tf);
-        cprintf("toK\n");
+    t_switch_tok:
+        tf->tf_cs = KERNEL_CS;
+        tf->tf_ss = tf->tf_es = tf->tf_ds = KERNEL_DS;
         break;
     case IRQ_OFFSET + IRQ_IDE1:
     case IRQ_OFFSET + IRQ_IDE2:

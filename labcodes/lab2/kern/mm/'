@@ -347,7 +347,7 @@ pmm_init(void) {
 // return vaule: the kernel virtual address of this pte
 pte_t *
 get_pte(pde_t *pgdir, uintptr_t la, bool create) {
-    /* LAB2 EXERCISE 2: 2013012291
+    /* LAB2 EXERCISE 2: YOUR CODE
      *
      * If you need to visit a physical address, please use KADDR()
      * please read pmm.h for useful macros
@@ -380,7 +380,9 @@ get_pte(pde_t *pgdir, uintptr_t la, bool create) {
     }
     return NULL;          // (8) return page table entry
 #endif
+    cprintf("get_pte called\n");
     pde_t *pdep = pgdir + PDX(la);
+    cprintf("pde pointer: %x\n", pdep);
     if (!(*pdep & PTE_P)){
         if (!create){
             return NULL;
@@ -390,11 +392,17 @@ get_pte(pde_t *pgdir, uintptr_t la, bool create) {
             return NULL;
         }
         set_page_ref(page_p, 1);
-        uintptr_t ptp = page2pa(page_p);
+        pte_t *ptp = page2pa(page_p);
+        cprintf("value of ptp: %x\n", ptp);
         memset(KADDR(ptp), 0, PGSIZE);
         *pdep = (uint32_t)ptp + PTE_USER;
+        cprintf("value of pde: %x\n", *pdep);
     }
-    return KADDR(PDE_ADDR(*pdep) + 4 * PTX(la)); // use a constant to mimic pointer operation
+    cprintf("address in pde: %x\n", PDE_ADDR(*pdep));
+    cprintf("content of the address in pde: %x\n",  *(uintptr_t *)PDE_ADDR(*pdep) );
+    cprintf("end of get_pte\n");
+    cprintf("value to return: %x\n", KADDR(PDE_ADDR(*pdep) + PTX(la))); 
+    return KADDR((pte_t *)PDE_ADDR(*pdep) + PTX(la)); 
 }
 
 //get_page - get related Page struct for linear address la using PDT pgdir
@@ -415,7 +423,7 @@ get_page(pde_t *pgdir, uintptr_t la, pte_t **ptep_store) {
 //note: PT is changed, so the TLB need to be invalidate 
 static inline void
 page_remove_pte(pde_t *pgdir, uintptr_t la, pte_t *ptep) {
-    /* LAB2 EXERCISE 3: 2013012291
+    /* LAB2 EXERCISE 3: YOUR CODE
      *
      * Please check if ptep is valid, and tlb must be manually updated if mapping is updated
      *
@@ -440,14 +448,17 @@ page_remove_pte(pde_t *pgdir, uintptr_t la, pte_t *ptep) {
                                   //(6) flush tlb
     }
 #endif
+#if 0
     if (*ptep & PTE_P){
         struct Page *page_p = pte2page(*ptep);
-        if (page_ref_dec(page_p) == 0){
+        page_ref_dec(page_p);
+        if (page_p->ref == 0){
             free_page(page_p);
             *ptep = 0;
             tlb_invalidate(pgdir, la);
         }
     }
+#endif
 }
 
 //page_remove - free an Page which is related linear address la and has an validated pte
@@ -469,8 +480,10 @@ page_remove(pde_t *pgdir, uintptr_t la) {
 //note: PT is changed, so the TLB need to be invalidate 
 int
 page_insert(pde_t *pgdir, struct Page *page, uintptr_t la, uint32_t perm) {
+    cprintf("page_insert called\n");
     pte_t *ptep = get_pte(pgdir, la, 1);
     if (ptep == NULL) {
+        cprintf("get_pte return null\n");
         return -E_NO_MEM;
     }
     page_ref_inc(page);
@@ -513,12 +526,15 @@ check_pgdir(void) {
     p1 = alloc_page();
     assert(page_insert(boot_pgdir, p1, 0x0, 0) == 0);
 
+    cprintf("pte_t \n");
     pte_t *ptep;
     assert((ptep = get_pte(boot_pgdir, 0x0, 0)) != NULL);
     assert(pte2page(*ptep) == p1);
     assert(page_ref(p1) == 1);
 
+    cprintf("ptep =\n");
     ptep = &((pte_t *)KADDR(PDE_ADDR(boot_pgdir[0])))[1];
+    cprintf("ptep = %x\n", ptep);
     assert(get_pte(boot_pgdir, PGSIZE, 0) == ptep);
 
     p2 = alloc_page();

@@ -444,9 +444,9 @@ page_remove_pte(pde_t *pgdir, uintptr_t la, pte_t *ptep) {
         struct Page *page_p = pte2page(*ptep);
         if (page_ref_dec(page_p) == 0){
             free_page(page_p);
-            *ptep = 0;
-            tlb_invalidate(pgdir, la);
         }
+        *ptep = 0;
+        tlb_invalidate(pgdir, la);
     }
 }
 

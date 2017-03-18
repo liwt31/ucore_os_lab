@@ -300,6 +300,7 @@ pmm_init(void) {
 
     // create boot_pgdir, an initial page directory(Page Directory Table, PDT)
     boot_pgdir = boot_alloc_page();
+    cprintf("%x\n", boot_pgdir);
     memset(boot_pgdir, 0, PGSIZE);
     boot_cr3 = PADDR(boot_pgdir);
 
@@ -318,7 +319,9 @@ pmm_init(void) {
 
     //temporary map: 
     //virtual_addr 3G~3G+4M = linear_addr 0~4M = linear_addr 3G~3G+4M = phy_addr 0~4M     
+    cprintf("%x\n", boot_pgdir[0]);
     boot_pgdir[0] = boot_pgdir[PDX(KERNBASE)];
+    cprintf("%x\n", boot_pgdir[0]);
 
     enable_paging();
 

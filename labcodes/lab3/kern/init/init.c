@@ -47,6 +47,7 @@ kern_init(void) {
     //LAB1: CAHLLENGE 1 If you try to do it, uncomment lab1_switch_test()
     // user/kernel mode switch test
     //lab1_switch_test();
+    // commented when doing lab3. Introduce protection fault
 
     /* do nothing */
     while (1);
@@ -93,11 +94,28 @@ lab1_print_cur_status(void) {
 static void
 lab1_switch_to_user(void) {
     //LAB1 CHALLENGE 1 : TODO
+    // Make room for esp and ss
+    asm volatile ( "subl $8, %%esp \n"
+            "int %0 \n"
+    // restore esp from pushl ebp;movl esp,ebp
+            "movl %%ebp, %%esp"
+             : 
+             : "i" (T_SWITCH_TOU));
 }
 
 static void
 lab1_switch_to_kernel(void) {
     //LAB1 CHALLENGE 1 :  TODO
+    // It is commented in trapframe that the last 2 bytes of struct trapframe
+    // is reserved for crossing rings. As far as I am concerned, switching from
+    // user to kernel is crossing ring. So I left 2 bytes here just in case. If 
+    // it's not necessary it doesn't matter, because in the end it's what's 
+    // stores in %ebp that determines the value of %esp
+    asm volatile ( "subl $8, %%esp \n"
+            "int %0 \n"
+            "movl %%ebp, %%esp"
+             : 
+             : "i" (T_SWITCH_TOK));
 }
 
 static void

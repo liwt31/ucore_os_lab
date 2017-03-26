@@ -1,0 +1,720 @@
+diff -Nur ../../OSbak/labcodes/lab2/boot/bootasm.S lab2/boot/bootasm.S
+--- ../../OSbak/labcodes/lab2/boot/bootasm.S	2017-02-26 17:12:48.615510665 +0800
++++ lab2/boot/bootasm.S	2017-03-07 17:25:00.925475684 +0800
+@@ -26,7 +26,8 @@
+     # Enable A20:
+     #  For backwards compatibility with the earliest PCs, physical
+     #  address line 20 is tied low, so that addresses higher than
+-    #  1MB wrap around to zero by default. This code undoes this.
++    #  1MB wrap around to zero by default. This code undoes this
++    #  No need to pay much attention to this code. Take it as a necessary preparation to enable protection mode.
+ seta20.1:
+     inb $0x64, %al                                  # Wait for not busy(8042 input buffer empty).
+     testb $0x2, %al
+@@ -66,7 +67,9 @@
+     # and segment translation that makes virtual addresses
+     # identical to physical addresses, so that the
+     # effective memory map does not change during the switch.
++    # GDT: global descriptor table.
+     lgdt gdtdesc
++	# load gdt, real mode instr
+     movl %cr0, %eax
+     orl $CR0_PE_ON, %eax
+     movl %eax, %cr0
+@@ -98,10 +101,16 @@
+ # Bootstrap GDT
+ .p2align 2                                          # force 4 byte alignment
+ gdt:
++	# Fisrt seg descriptor, left blank is requested.
+     SEG_NULLASM                                     # null seg
++	# Next 2 segs are for code and data repectively
++	# The first num parameter is the starting address, and the second is the length
++	# they actually overlap and have maximum space
++	# This is for the convenience of education. The protection is weak this way.
+     SEG_ASM(STA_X|STA_R, 0x0, 0xffffffff)           # code seg for bootloader and kernel
+     SEG_ASM(STA_W, 0x0, 0xffffffff)                 # data seg for bootloader and kernel
+ 
++# Description of gdt
+ gdtdesc:
+     .word 0x17                                      # sizeof(gdt) - 1
+     .long gdt                                       # address gdt
+diff -Nur ../../OSbak/labcodes/lab2/boot/bootasm.S.orig lab2/boot/bootasm.S.orig
+--- ../../OSbak/labcodes/lab2/boot/bootasm.S.orig	1970-01-01 08:00:00.000000000 +0800
++++ lab2/boot/bootasm.S.orig	2017-03-07 16:49:16.561509345 +0800
+@@ -0,0 +1,107 @@
++#include <asm.h>
++
++# Start the CPU: switch to 32-bit protected mode, jump into C.
++# The BIOS loads this code from the first sector of the hard disk into
++# memory at physical address 0x7c00 and starts executing in real mode
++# with %cs=0 %ip=7c00.
++
++.set PROT_MODE_CSEG,        0x8                     # kernel code segment selector
++.set PROT_MODE_DSEG,        0x10                    # kernel data segment selector
++.set CR0_PE_ON,             0x1                     # protected mode enable flag
++.set SMAP,                  0x534d4150
++
++# start address should be 0:7c00, in real mode, the beginning address of the running bootloader
++.globl start
++start:
++.code16                                             # Assemble for 16-bit mode
++    cli                                             # Disable interrupts
++    cld                                             # String operations increment
++
++    # Set up the important data segment registers (DS, ES, SS).
++    xorw %ax, %ax                                   # Segment number zero
++    movw %ax, %ds                                   # -> Data Segment
++    movw %ax, %es                                   # -> Extra Segment
++    movw %ax, %ss                                   # -> Stack Segment
++
++    # Enable A20:
++    #  For backwards compatibility with the earliest PCs, physical
++    #  address line 20 is tied low, so that addresses higher than
++    #  1MB wrap around to zero by default. This code undoes this.
++seta20.1:
++    inb $0x64, %al                                  # Wait for not busy(8042 input buffer empty).
++    testb $0x2, %al
++    jnz seta20.1
++
++    movb $0xd1, %al                                 # 0xd1 -> port 0x64
++    outb %al, $0x64                                 # 0xd1 means: write data to 8042's P2 port
++
++seta20.2:
++    inb $0x64, %al                                  # Wait for not busy(8042 input buffer empty).
++    testb $0x2, %al
++    jnz seta20.2
++
++    movb $0xdf, %al                                 # 0xdf -> port 0x60
++    outb %al, $0x60                                 # 0xdf = 11011111, means set P2's A20 bit(the 1 bit) to 1
++
++probe_memory:
++    movl $0, 0x8000
++    xorl %ebx, %ebx
++    movw $0x8004, %di
++start_probe:
++    movl $0xE820, %eax
++    movl $20, %ecx
++    movl $SMAP, %edx
++    int $0x15
++    jnc cont
++    movw $12345, 0x8000
++    jmp finish_probe
++cont:
++    addw $20, %di
++    incl 0x8000
++    cmpl $0, %ebx
++    jnz start_probe
++finish_probe:
++
++    # Switch from real to protected mode, using a bootstrap GDT
++    # and segment translation that makes virtual addresses
++    # identical to physical addresses, so that the
++    # effective memory map does not change during the switch.
++    lgdt gdtdesc
++    movl %cr0, %eax
++    orl $CR0_PE_ON, %eax
++    movl %eax, %cr0
++
++    # Jump to next instruction, but in 32-bit code segment.
++    # Switches processor into 32-bit mode.
++    ljmp $PROT_MODE_CSEG, $protcseg
++
++.code32                                             # Assemble for 32-bit mode
++protcseg:
++    # Set up the protected-mode data segment registers
++    movw $PROT_MODE_DSEG, %ax                       # Our data segment selector
++    movw %ax, %ds                                   # -> DS: Data Segment
++    movw %ax, %es                                   # -> ES: Extra Segment
++    movw %ax, %fs                                   # -> FS
++    movw %ax, %gs                                   # -> GS
++    movw %ax, %ss                                   # -> SS: Stack Segment
++
++    # Set up the stack pointer and call into C. The stack region is from 0--start(0x7c00)
++    movl $0x0, %ebp
++    movl $start, %esp
++    call bootmain
++
++    # If bootmain returns (it shouldn't), loop.
++spin:
++    jmp spin
++
++.data
++# Bootstrap GDT
++.p2align 2                                          # force 4 byte alignment
++gdt:
++    SEG_NULLASM                                     # null seg
++    SEG_ASM(STA_X|STA_R, 0x0, 0xffffffff)           # code seg for bootloader and kernel
++    SEG_ASM(STA_W, 0x0, 0xffffffff)                 # data seg for bootloader and kernel
++
++gdtdesc:
++    .word 0x17                                      # sizeof(gdt) - 1
++    .long gdt                                       # address gdt
+diff -Nur ../../OSbak/labcodes/lab2/boot/bootmain.c lab2/boot/bootmain.c
+--- ../../OSbak/labcodes/lab2/boot/bootmain.c	2017-02-26 17:12:48.615510665 +0800
++++ lab2/boot/bootmain.c	2017-03-07 17:25:00.925475684 +0800
+@@ -37,6 +37,7 @@
+ static void
+ waitdisk(void) {
+     while ((inb(0x1F7) & 0xC0) != 0x40)
++	// inb : assembly language, read(in) a byte(b) from a certain port
+         /* do nothing */;
+ }
+ 
+@@ -47,10 +48,12 @@
+     waitdisk();
+ 
+     outb(0x1F2, 1);                         // count = 1
++	// num of sector to read
+     outb(0x1F3, secno & 0xFF);
+     outb(0x1F4, (secno >> 8) & 0xFF);
+     outb(0x1F5, (secno >> 16) & 0xFF);
+     outb(0x1F6, ((secno >> 24) & 0xF) | 0xE0);
++	// 1F3 to 1F6, address of LBA
+     outb(0x1F7, 0x20);                      // cmd 0x20 - read sectors
+ 
+     // wait for disk to be ready
+@@ -58,6 +61,7 @@
+ 
+     // read a sector
+     insl(0x1F0, dst, SECTSIZE / 4);
++	// import double word string from port
+ }
+ 
+ /* *
+@@ -66,7 +70,8 @@
+  * */
+ static void
+ readseg(uintptr_t va, uint32_t count, uint32_t offset) {
+-    uintptr_t end_va = va + count;
++    intptr_t end_va = va + count;
++	// intptr_t : simply another name for int32_t. Why not uint32_t ?
+ 
+     // round down to sector boundary
+     va -= offset % SECTSIZE;
+@@ -87,9 +92,11 @@
+ bootmain(void) {
+     // read the 1st page off disk
+     readseg((uintptr_t)ELFHDR, SECTSIZE * 8, 0);
++	// uintptr_t uint_32.
+ 
+     // is this a valid ELF?
+     if (ELFHDR->e_magic != ELF_MAGIC) {
++	// if the reading process goes wrong, the e_magic will not be initialized properly.
+         goto bad;
+     }
+ 
+diff -Nur ../../OSbak/labcodes/lab2/.check_pmm.log lab2/.check_pmm.log
+--- ../../OSbak/labcodes/lab2/.check_pmm.log	1970-01-01 08:00:00.000000000 +0800
++++ lab2/.check_pmm.log	2017-03-18 17:09:44.401583780 +0800
+@@ -0,0 +1,57 @@
++(THU.CST) os is loading ...
++
++Special kernel symbols:
++  entry  0xc010002a (phys)
++  etext  0xc0105be6 (phys)
++  edata  0xc0117a36 (phys)
++  end    0xc0118968 (phys)
++Kernel executable memory footprint: 99KB
++ebp:0xc0116f48 eip:0xc0100a64 args:0x00010094 0x00010094 0xc0116f78 0xc01000ae 
++    kern/debug/kdebug.c:309: print_stackframe+21
++ebp:0xc0116f58 eip:0xc0100d75 args:0x00000000 0x00000000 0x00000000 0xc0116fc8 
++    kern/debug/kmonitor.c:129: mon_backtrace+10
++ebp:0xc0116f78 eip:0xc01000ae args:0x00000000 0xc0116fa0 0xffff0000 0xc0116fa4 
++    kern/init/init.c:49: grade_backtrace2+19
++ebp:0xc0116f98 eip:0xc01000d0 args:0x00000000 0xffff0000 0xc0116fc4 0x00000029 
++    kern/init/init.c:54: grade_backtrace1+27
++ebp:0xc0116fb8 eip:0xc01000ed args:0x00000000 0xc010002a 0xffff0000 0xc010006d 
++    kern/init/init.c:59: grade_backtrace0+19
++ebp:0xc0116fd8 eip:0xc010010e args:0x00000000 0x00000000 0x00000000 0xc0105c00 
++    kern/init/init.c:64: grade_backtrace+26
++ebp:0xc0116ff8 eip:0xc010007a args:0x00000000 0x00000000 0x0000ffff 0x40cf9a00 
++    kern/init/init.c:29: kern_init+79
++memory management: default_pmm_manager
++e820map:
++  memory: 0009fc00, [00000000, 0009fbff], type = 1.
++  memory: 00000400, [0009fc00, 0009ffff], type = 2.
++  memory: 00010000, [000f0000, 000fffff], type = 2.
++  memory: 07ee0000, [00100000, 07fdffff], type = 1.
++  memory: 00020000, [07fe0000, 07ffffff], type = 2.
++  memory: 00040000, [fffc0000, ffffffff], type = 2.
++check_alloc_page() succeeded!
++c01b9000
++check_pgdir() succeeded!
++0
++1ba007
++check_boot_pgdir() succeeded!
++-------------------- BEGIN --------------------
++PDE(0e0) c0000000-f8000000 38000000 urw
++  |-- PTE(38000) c0000000-f8000000 38000000 -rw
++PDE(001) fac00000-fb000000 00400000 -rw
++  |-- PTE(000e0) faf00000-fafe0000 000e0000 urw
++  |-- PTE(00001) fafeb000-fafec000 00001000 -rw
++--------------------- END ---------------------
++++ setup timer interrupts
++0: @ring 0
++0:  cs = 8
++0:  ds = 10
++0:  es = 10
++0:  ss = 10
+++++ switch to  user  mode +++
++100 ticks
++End of Test.
++kernel panic at kern/trap/trap.c:18:
++    EOT: kernel seems ok.
++Welcome to the kernel debug monitor!!
++Type 'help' for a list of commands.
++K> 
+\ No newline at end of file
+diff -Nur ../../OSbak/labcodes/lab2/kern/debug/kdebug.c lab2/kern/debug/kdebug.c
+--- ../../OSbak/labcodes/lab2/kern/debug/kdebug.c	2017-02-26 17:12:48.615510665 +0800
++++ lab2/kern/debug/kdebug.c	2017-03-07 17:25:00.925475684 +0800
+@@ -293,7 +293,7 @@
+  * */
+ void
+ print_stackframe(void) {
+-     /* LAB1 YOUR CODE : STEP 1 */
++     /* LAB1 2013012291 : STEP 1 */
+      /* (1) call read_ebp() to get the value of ebp. the type is (uint32_t);
+       * (2) call read_eip() to get the value of eip. the type is (uint32_t);
+       * (3) from 0 .. STACKFRAME_DEPTH
+@@ -305,5 +305,21 @@
+       *           NOTICE: the calling funciton's return addr eip  = ss:[ebp+4]
+       *                   the calling funciton's ebp = ss:[ebp]
+       */
++    uint32_t ebp = read_ebp();
++    uint32_t eip = read_eip();
++    int i;
++    for(i=0;i<STACKFRAME_DEPTH;i++){
++        if(0 == ebp) break;
++        cprintf("ebp:0x%08x eip:0x%08x ", ebp, eip);
++        cprintf("args:");
++        int j;
++        for(j=0;j<4;j++){
++            cprintf("0x%08x ",*((uint32_t*)ebp+2+j));
++        }
++        cprintf("\n");
++        print_debuginfo(eip-1);
++        eip = *((uint32_t*)ebp + 1);
++        ebp = *((uint32_t*)ebp);
++    }
+ }
+ 
+diff -Nur ../../OSbak/labcodes/lab2/kern/init/init.c lab2/kern/init/init.c
+--- ../../OSbak/labcodes/lab2/kern/init/init.c	2017-02-26 17:12:48.615510665 +0800
++++ lab2/kern/init/init.c	2017-03-07 17:25:00.925475684 +0800
+@@ -38,7 +38,7 @@
+ 
+     //LAB1: CAHLLENGE 1 If you try to do it, uncomment lab1_switch_test()
+     // user/kernel mode switch test
+-    //lab1_switch_test();
++    lab1_switch_test();
+ 
+     /* do nothing */
+     while (1);
+@@ -85,11 +85,28 @@
+ static void
+ lab1_switch_to_user(void) {
+     //LAB1 CHALLENGE 1 : TODO
++    // Make room for esp and ss
++    asm volatile ( "subl $8, %%esp \n"
++            "int %0 \n"
++    // restore esp from pushl ebp;movl esp,ebp
++            "movl %%ebp, %%esp"
++             : 
++             : "i" (T_SWITCH_TOU));
+ }
+ 
+ static void
+ lab1_switch_to_kernel(void) {
+     //LAB1 CHALLENGE 1 :  TODO
++    // It is commented in trapframe that the last 2 bytes of struct trapframe
++    // is reserved for crossing rings. As far as I am concerned, switching from
++    // user to kernel is crossing ring. So I left 2 bytes here just in case. If 
++    // it's not necessary it doesn't matter, because in the end it's what's 
++    // stores in %ebp that determines the value of %esp
++    asm volatile ( "subl $8, %%esp \n"
++            "int %0 \n"
++            "movl %%ebp, %%esp"
++             : 
++             : "i" (T_SWITCH_TOK));
+ }
+ 
+ static void
+diff -Nur ../../OSbak/labcodes/lab2/kern/mm/default_pmm.c lab2/kern/mm/default_pmm.c
+--- ../../OSbak/labcodes/lab2/kern/mm/default_pmm.c	2017-02-26 17:12:48.615510665 +0800
++++ lab2/kern/mm/default_pmm.c	2017-03-18 17:09:34.273578694 +0800
+@@ -9,7 +9,7 @@
+    usually split, and the remainder added to the list as another free block.
+    Please see Page 196~198, Section 8.2 of Yan Wei Min's chinese book "Data Structure -- C programming language"
+ */
+-// LAB2 EXERCISE 1: YOUR CODE
++// LAB2 EXERCISE 1: 2013012291
+ // you should rewrite functions: default_init,default_init_memmap,default_alloc_pages, default_free_pages.
+ /*
+  * Details of FFMA
+@@ -72,10 +72,10 @@
+     for (; p != base + n; p ++) {
+         assert(PageReserved(p));
+         p->flags = p->property = 0;
++        SetPageProperty(p);
+         set_page_ref(p, 0);
+     }
+     base->property = n;
+-    SetPageProperty(base);
+     nr_free += n;
+     list_add(&free_list, &(base->page_link));
+ }
+@@ -97,13 +97,17 @@
+     }
+     if (page != NULL) {
+         list_del(&(page->page_link));
+-        if (page->property > n) {
++        if (page->property > n) { // If the block is not malloced completely, 
++                                    // create a new block
+             struct Page *p = page + n;
+             p->property = page->property - n;
+             list_add(&free_list, &(p->page_link));
+-    }
++        }
++        struct Page *p = page;
++        for(; p != page + n; p ++){
++            ClearPageProperty(p);
++        }
+         nr_free -= n;
+-        ClearPageProperty(page);
+     }
+     return page;
+ }
+@@ -115,10 +119,10 @@
+     for (; p != base + n; p ++) {
+         assert(!PageReserved(p) && !PageProperty(p));
+         p->flags = 0;
++        SetPageProperty(p);
+         set_page_ref(p, 0);
+     }
+     base->property = n;
+-    SetPageProperty(base);
+     list_entry_t *le = list_next(&free_list);
+     while (le != &free_list) {
+         p = le2page(le, page_link);
+@@ -136,7 +140,7 @@
+         }
+     }
+     nr_free += n;
+-    list_add(&free_list, &(base->page_link));
++    list_add_before(&free_list, &(base->page_link));
+ }
+ 
+ static size_t
+diff -Nur ../../OSbak/labcodes/lab2/kern/mm/memlayout.h lab2/kern/mm/memlayout.h
+--- ../../OSbak/labcodes/lab2/kern/mm/memlayout.h	2017-02-26 17:12:48.615510665 +0800
++++ lab2/kern/mm/memlayout.h	2017-03-12 20:05:17.412135228 +0800
+@@ -120,7 +120,7 @@
+ 
+ /* free_area_t - maintains a doubly linked list to record free (unused) pages */
+ typedef struct {
+-    list_entry_t free_list;         // the list header
++    list_entry_t free_list;         // the list header, actually acts as a sentinel
+     unsigned int nr_free;           // # of free pages in this free list
+ } free_area_t;
+ 
+diff -Nur ../../OSbak/labcodes/lab2/kern/mm/pmm.c lab2/kern/mm/pmm.c
+--- ../../OSbak/labcodes/lab2/kern/mm/pmm.c	2017-02-26 17:12:48.615510665 +0800
++++ lab2/kern/mm/pmm.c	2017-03-13 22:17:05.756782260 +0800
+@@ -300,6 +300,7 @@
+ 
+     // create boot_pgdir, an initial page directory(Page Directory Table, PDT)
+     boot_pgdir = boot_alloc_page();
++    cprintf("%x\n", boot_pgdir);
+     memset(boot_pgdir, 0, PGSIZE);
+     boot_cr3 = PADDR(boot_pgdir);
+ 
+@@ -318,7 +319,9 @@
+ 
+     //temporary map: 
+     //virtual_addr 3G~3G+4M = linear_addr 0~4M = linear_addr 3G~3G+4M = phy_addr 0~4M     
++    cprintf("%x\n", boot_pgdir[0]);
+     boot_pgdir[0] = boot_pgdir[PDX(KERNBASE)];
++    cprintf("%x\n", boot_pgdir[0]);
+ 
+     enable_paging();
+ 
+@@ -347,7 +350,7 @@
+ // return vaule: the kernel virtual address of this pte
+ pte_t *
+ get_pte(pde_t *pgdir, uintptr_t la, bool create) {
+-    /* LAB2 EXERCISE 2: YOUR CODE
++    /* LAB2 EXERCISE 2: 2013012291
+      *
+      * If you need to visit a physical address, please use KADDR()
+      * please read pmm.h for useful macros
+@@ -380,6 +383,21 @@
+     }
+     return NULL;          // (8) return page table entry
+ #endif
++    pde_t *pdep = pgdir + PDX(la);
++    if (!(*pdep & PTE_P)){
++        if (!create){
++            return NULL;
++        }
++        struct Page *page_p = alloc_page();
++        if (!page_p){
++            return NULL;
++        }
++        set_page_ref(page_p, 1);
++        uintptr_t ptp = page2pa(page_p);
++        memset(KADDR(ptp), 0, PGSIZE);
++        *pdep = (uint32_t)ptp + PTE_USER;
++    }
++    return KADDR(PDE_ADDR(*pdep) + 4 * PTX(la)); // use a constant to mimic pointer operation
+ }
+ 
+ //get_page - get related Page struct for linear address la using PDT pgdir
+@@ -400,7 +418,7 @@
+ //note: PT is changed, so the TLB need to be invalidate 
+ static inline void
+ page_remove_pte(pde_t *pgdir, uintptr_t la, pte_t *ptep) {
+-    /* LAB2 EXERCISE 3: YOUR CODE
++    /* LAB2 EXERCISE 3: 2013012291
+      *
+      * Please check if ptep is valid, and tlb must be manually updated if mapping is updated
+      *
+@@ -425,6 +443,14 @@
+                                   //(6) flush tlb
+     }
+ #endif
++    if (*ptep & PTE_P){
++        struct Page *page_p = pte2page(*ptep);
++        if (page_ref_dec(page_p) == 0){
++            free_page(page_p);
++        }
++        *ptep = 0;
++        tlb_invalidate(pgdir, la);
++    }
+ }
+ 
+ //page_remove - free an Page which is related linear address la and has an validated pte
+diff -Nur ../../OSbak/labcodes/lab2/kern/trap/trap.c lab2/kern/trap/trap.c
+--- ../../OSbak/labcodes/lab2/kern/trap/trap.c	2017-02-26 17:12:48.615510665 +0800
++++ lab2/kern/trap/trap.c	2017-03-18 17:09:42.013582589 +0800
+@@ -34,7 +34,7 @@
+ /* idt_init - initialize IDT to each of the entry points in kern/trap/vectors.S */
+ void
+ idt_init(void) {
+-     /* LAB1 YOUR CODE : STEP 2 */
++     /* LAB1 2013012291 : STEP 2 */
+      /* (1) Where are the entry addrs of each Interrupt Service Routine (ISR)?
+       *     All ISR's entry addrs are stored in __vectors. where is uintptr_t __vectors[] ?
+       *     __vectors[] is in kern/trap/vector.S which is produced by tools/vector.c
+@@ -46,6 +46,13 @@
+       *     You don't know the meaning of this instruction? just google it! and check the libs/x86.h to know more.
+       *     Notice: the argument of lidt is idt_pd. try to find it!
+       */
++    extern uintptr_t __vectors[];
++    int i;
++    for(i=0;i<256;i++){
++        SETGATE(idt[i], 0, GD_KTEXT, __vectors[i], DPL_KERNEL);
++    } 
++    SETGATE(idt[T_SWITCH_TOK], 0, GD_KTEXT, __vectors[T_SWITCH_TOK], DPL_USER);
++    lidt(&idt_pd);
+ }
+ 
+ static const char *
+@@ -141,12 +148,16 @@
+ 
+     switch (tf->tf_trapno) {
+     case IRQ_OFFSET + IRQ_TIMER:
+-        /* LAB1 YOUR CODE : STEP 3 */
++        /* LAB1 2013012291 : STEP 3 */
+         /* handle the timer interrupt */
+         /* (1) After a timer interrupt, you should record this event using a global variable (increase it), such as ticks in kern/driver/clock.c
+          * (2) Every TICK_NUM cycle, you can print some info using a funciton, such as print_ticks().
+          * (3) Too Simple? Yes, I think so!
+          */
++        ticks++;
++        if(0 == ticks%TICK_NUM){
++            print_ticks();
++        }
+         break;
+     case IRQ_OFFSET + IRQ_COM1:
+         c = cons_getc();
+@@ -155,11 +166,26 @@
+     case IRQ_OFFSET + IRQ_KBD:
+         c = cons_getc();
+         cprintf("kbd [%03d] %c\n", c, c);
++        if ('3' == c){
++            goto t_switch_tou;
++        }
++        if ('0' == c){
++            goto t_switch_tok;
++        }
+         break;
+-    //LAB1 CHALLENGE 1 : YOUR CODE you should modify below codes.
++    //LAB1 CHALLENGE 1 : 2013012291 you should modify below codes.
+     case T_SWITCH_TOU:
++    t_switch_tou:
++        // Switch segment (also ring in cs)
++        tf->tf_cs = USER_CS;
++        tf->tf_ss = tf->tf_es = tf->tf_ds = USER_DS;
++        // enable IO in user ring
++        tf->tf_eflags |= FL_IOPL_MASK;
++        break;
+     case T_SWITCH_TOK:
+-        panic("T_SWITCH_** ??\n");
++    t_switch_tok:
++        tf->tf_cs = KERNEL_CS;
++        tf->tf_ss = tf->tf_es = tf->tf_ds = KERNEL_DS;
+         break;
+     case IRQ_OFFSET + IRQ_IDE1:
+     case IRQ_OFFSET + IRQ_IDE2:
+diff -Nur ../../OSbak/labcodes/lab2/lab2-2013012291.md lab2/lab2-2013012291.md
+--- ../../OSbak/labcodes/lab2/lab2-2013012291.md	1970-01-01 08:00:00.000000000 +0800
++++ lab2/lab2-2013012291.md	2017-03-18 17:22:07.917776475 +0800
+@@ -0,0 +1,103 @@
++# Lab 2
++
++## Ex0
++
++1. Create patch file from my own version of lab1 code and the original copy of lab1 code using 'diff -Nur ...' command and redirect the output to 'patch.diff'.
++2. Apply the patch file to lab2 code using 'patch -d lab2 -p1 < patch.diff'. '-d' means the target is a directory and '-p1' means to ignore the first level of dir.
++
++## Ex1
++
++#### How to implement Fisrt Fit Mem Algorithm?
++
++The framework is already implemented and I only need to modify a few of the codes.
++1. In *default_init_memmap*, the flag of each page should be set to correct value.
++    - Because all 'reserved'-bits are set to 1 prior to this function, whose purpose is to initiallize pages for allocation, those bits should be cleared.
++    - On the other hand, because no allocation has actually taken place, all pages are available, which meas the bits for 'property' should be set to 1.
++2. In *default_alloc_pages*, the 'property'-bits should be cleared because they are no longer available.
++3. In *default_free_pages*, the 'property'-bits should be set because they are available again.
++4. Test for 'make qemu' failed. Debugging info shows 
++
++        assert((p0 = alloc_page()) == p2 - 1);
++
++    went wrong. The bug should be fixed.
++    - In the implemented FFMA code, the blocks freed is added to the beginning of free_area.
++    - So, in the corresponding codes of *default_check*, where p0 is freed first and p1 is freed last, p1 would be at the beginning of the free_area list.
++    - Which means when allocating p0 again, p1 is firstly considered, and the position is in p2 + 1 rather than p2 - 1.
++    - As *default_check* must not be changed, the logic for FFMA should be adjusted to meet the requirement.
++    - My implementation is to change *default_free_pages*. Freed pages are added to the last of the free_area list.
++
++#### How to improve the implemented FFMA?
++
++1. As shown in the video, FFMA should maintain a sorted list according to the address of the pages.
++2. To implement this, whenever adding nodes to the list of free pages, always add after the page with the largest address in pages with smaller address than the node to be added. Various algorithms could achieve this goal.
++3. If the list was kept sorted, the time complexity for combining free blocks after pages were freed would hopefully be reduced to O(1) rather than O(n). 
++4. Besides, if FFMA was implemented this way, the bug in Ex1.4 should not happen.
++
++#### Differences from the answer provided
++1. In the answer, the granulariry for page management in linked list is single page. For example, in *default_init_memmap* every page is linked to the list. 
++2. In my code, the linked list contains blocks of continuous pages instead of single page. For example, in *default_init_memmap* only one page with the size of the free block is linked to the list.
++3. It appears my code is faster because it saves time for list manipulation, on the otherhand the searching process for free blocks is faster.
++
++#### List of knowledge
++1. Operation of the elegant linked list.
++2. Implementation of a FFMA.
++3. Meanings of bits in a page entry.
++
++## Ex2
++
++#### Implementation of *get_pte*.
++
++1. If the secondary page table containing the pte requested is present, then it's easy. 
++    - Find the base of the secondary page table using page index of the directory table, then add the offset (index of secondary page) to the base, according to corresponding la of the page entry.
++    - A tricky point is that entries in page directory table record physical base addresses for secondary tables, while the function should return virtual address of the secondary table entry. 
++    - So after getting the (physical) address of the page table entry required, it should be converted to virtual address.
++2. Otherwise, which means the secondary page table containing the pte requested is not present, then it need to be created first.
++    - If the caller of *get_pte* does not allow creating page table, or attempt to create page table using *alloc_page* failed, the only option is to return NULL; 
++    - After the memory for the page table is allocated, it should be initialized by setting all bits of the page table to 0, indicating all entries are currently unavailable.
++    - And the ref number of the page containing the page table should be set to 1, because the newly allocated page is refered and only refered by a page directory entry.
++    - The corresponding page directory entry (32 bit) should record this new page table by:
++        - Recording the address of the page table in high 20 bits. This is enough for recording because the address of the page table is 4K aligned, which means the low 12 bits of the address are always 0.
++        - Recording the permission of the page table in low 12 bits.
++
++#### Meanings of components in page table directory and page table entries.
++1. High 20 bits: the base address for next level of memory management module, which could be page table or page. These info are essensial for CPU to construct physical address from virtual address.
++2. Low 12 bits: flags recording properties of the entry, including whether it presents, is writable, is changed and so on. The definations are in mmu.h. With these flags, ucore and CPU would be able to:
++    - manage page table and cache page entry more effectively.
++    - protect data from being accessed or wrote in a potentially hazardous manner.
++
++#### If an exception happens while accessing a page, what would hardware do next?
++1. Protect the context, such as values of %eip and %cs.
++2. Pass the control to the kernel, which would carry out corresponding (page fault) ISR.
++
++#### Differences from the answer provided
++The difference is really small. At the last line I used a numeric calculation to get the address while the anwser establish an array first. I think with the comment mine is more readable.
++
++#### List of knowledge
++
++1. The relation among pages, addresses of pages, virtual address and physical address
++2. The meaning of *page_ref*.
++
++## Ex3
++
++#### Implementation of *page_remove_pte*.
++1. Check the argument. 
++2. Find the page by pte, then break the connection between them. 
++    - The ref number of the page is decreased by 1. If the ref number of the pages reaches 0, the page should be released.
++    - the pte is erased by setting all bits of the pte to 0.
++3. Invalidate the TLB for the pte (for it does not exist anymore).
++
++#### The relationship between page array and page directory/table entry.
++1. If the entry is present, then it is related to an item in the page array.
++2. Because the relation between page array index and physical address is linear, with physical address recorded in the page directory/table entry, page array index could be obtained, as well as the address of the page array item.
++
++#### What would you do if you want physical address identical to virtual address?
++1. Change the address of kernel in link file to 0x00100000.
++2. Change the base of the kernel in memlayout.h to 0x00000000.
++3. Delete redundant protection when enabling page.
++
++#### Differences from the answer provided
++Exactly the same.
++
++#### List of knowledge
++1. The same as Ex2.
++2. Controll over TLB.
+Binary files ../../OSbak/labcodes/lab2/.lab2-2013012291.md.swp and lab2/.lab2-2013012291.md.swp differ
+diff -Nur ../../OSbak/labcodes/lab2/tools/gdbinit.orig lab2/tools/gdbinit.orig
+--- ../../OSbak/labcodes/lab2/tools/gdbinit.orig	1970-01-01 08:00:00.000000000 +0800
++++ lab2/tools/gdbinit.orig	2017-03-07 17:25:00.925475684 +0800
+@@ -0,0 +1,3 @@
++file bin/kernel
++target remote :1234
++break kern_init
+diff -Nur ../../OSbak/labcodes/lab2/tools/gdbinit.rej lab2/tools/gdbinit.rej
+--- ../../OSbak/labcodes/lab2/tools/gdbinit.rej	1970-01-01 08:00:00.000000000 +0800
++++ lab2/tools/gdbinit.rej	2017-03-07 17:25:00.925475684 +0800
+@@ -0,0 +1,8 @@
++--- ../OSbak/labcodes/lab1/tools/gdbinit	2017-02-26 17:12:48.615510665 +0800
+++++ tools/gdbinit	2017-02-26 16:46:42.024296757 +0800
++@@ -1,4 +1,5 @@
++ file bin/kernel
+++set architecture i8086
++ target remote :1234
++ break kern_init
++-continue+continue
+diff -Nur ../../OSbak/labcodes/lab2/tools/sign.c lab2/tools/sign.c
+--- ../../OSbak/labcodes/lab2/tools/sign.c	2017-02-26 17:12:48.619510661 +0800
++++ lab2/tools/sign.c	2017-03-07 17:25:00.925475684 +0800
+@@ -1,3 +1,4 @@
++// Add a signature to the input file (must smaller than 510bytes) to make it legal for MBR
+ #include <stdio.h>
+ #include <errno.h>
+ #include <string.h>
+@@ -6,11 +7,15 @@
+ int
+ main(int argc, char *argv[]) {
+     struct stat st;
++	// stat: clib to obtain status of a certain file
++	// the struct contains all kinds of info related to the file, such as size isdir and so on.
+     if (argc != 3) {
+         fprintf(stderr, "Usage: <input filename> <output filename>\n");
+         return -1;
+     }
+     if (stat(argv[1], &st) != 0) {
++		// stat function : check the status of the first parameter and copy it to the second parameter
++		// if the process is successful, return 0, else return -1
+         fprintf(stderr, "Error opening file '%s': %s\n", argv[1], strerror(errno));
+         return -1;
+     }

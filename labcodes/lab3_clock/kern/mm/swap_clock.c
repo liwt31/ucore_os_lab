@@ -2,30 +2,13 @@
 #include <x86.h>
 #include <stdio.h>
 #include <string.h>
+#include <mmu.h>
 #include <swap.h>
 #include <swap_clock.h>
 #include <list.h>
 
-/* [wikipedia]The simplest Page Replacement Algorithm(PRA) is a FIFO algorithm. The first-in, first-out
- * page replacement algorithm is a low-overhead algorithm that requires little book-keeping on
- * the part of the operating system. The idea is obvious from the name - the operating system
- * keeps track of all the pages in memory in a queue, with the most recent arrival at the back,
- * and the earliest arrival in front. When a page needs to be replaced, the page at the front
- * of the queue (the oldest page) is selected. While FIFO is cheap and intuitive, it performs
- * poorly in practical application. Thus, it is rarely used in its unmodified form. This
- * algorithm experiences Belady's anomaly.
- *
- * Details of FIFO PRA
- * (1) Prepare: In order to implement FIFO PRA, we should manage all swappable pages, so we can
- *              link these pages into pra_list_head according the time order. At first you should
- *              be familiar to the struct list in list.h. struct list is a simple doubly linked list
- *              implementation. You should know howto USE: list_init, list_add(list_add_after),
- *              list_add_before, list_del, list_next, list_prev. Another tricky method is to transform
- *              a general list struct to a special struct (such as struct page). You can find some MACRO:
- *              le2page (in memlayout.h), (in future labs: le2vma (in vmm.h), le2proc (in proc.h),etc.
- */
-
 list_entry_t pra_list_head;
+static list_entry_t *cur;
 /*
  * (2) _clock_init_mm: init pra_list_head and let  mm->sm_priv point to the addr of pra_list_head.
  *              Now, From the memory control struct mm_struct, we can access FIFO PRA
@@ -35,6 +18,7 @@ _clock_init_mm(struct mm_struct *mm)
 {     
      list_init(&pra_list_head);
      mm->sm_priv = &pra_list_head;
+     cur = &pra_list_head;
      //cprintf(" mm->sm_priv %x in clock_init_mm\n",mm->sm_priv);
      return 0;
 }
@@ -64,11 +48,11 @@ _clock_map_swappable(struct mm_struct *mm, uintptr_t addr, struct Page *page, in
  
     assert(entry != NULL && head != NULL);
     //record the page access situlation
-    /*LAB3 EXERCISE 2: YOUR CODE*/ 
     //(1)link the most recent arrival page at the back of the pra_list_head qeueue.
     list_add_before(head, entry);
     return 0;
 }
+
 /*
  *  (4)_clock_swap_out_victim: According FIFO PRA, we should unlink the  earliest arrival page in front of pra_list_head qeueue,
  *                            then set the addr of addr of this page to ptr_page.
@@ -76,19 +60,41 @@ _clock_map_swappable(struct mm_struct *mm, uintptr_t addr, struct Page *page, in
 static int
 _clock_swap_out_victim(struct mm_struct *mm, struct Page ** ptr_page, int in_tick)
 {
-     list_entry_t *head=(list_entry_t*) mm->sm_priv;
-         assert(head != NULL);
-     assert(in_tick==0);
-     /* Select the victim */
-     /*LAB3 EXERCISE 2: YOUR CODE*/ 
-     //(1)  unlink the  earliest arrival page in front of pra_list_head qeueue
-     //(2)  set the addr of addr of this page to ptr_page
-     *ptr_page = le2page(head->next, pra_page_link);
-     list_del(head->next);
-     return 0;
+    list_entry_t *head=(list_entry_t*) mm->sm_priv;
+        assert(head != NULL);
+    assert(in_tick==0);
+    /* Select the victim */
+    struct Page * cur_page = NULL;
+    while(1){
+        cur = cur->next;
+        if (cur == head){   // The pointer of the clock has run for a whole circle. Skip the sentinel.
+            continue;
+        }
+        cur_page = le2page(cur, pra_page_link);
+        pte_t *pte_p = get_pte(mm->pgdir, cur_page->pra_vaddr, 0);
+        if(pte_p == NULL){
+            panic("The page table entry for the page 0x%08x in swap manager does not exist", cur_page);
+        }
+        if(PTE_DIRTY(pte_p)){
+            PTE_CLEAR_DIRTY(pte_p);
+            continue;
+        }else{
+            if(PTE_ACCESSED(pte_p)){
+                PTE_CLEAR_ACCESSED(pte_p);
+                continue;
+            }else{  // the pte is neither accessed nor dirty
+                break;
+            }
+        }
+    }
+    //(1)  unlink the page that is not accessed recently
+    //(2)  set the addr of addr of this page to ptr_page
+    *ptr_page = cur_page;
+    list_del(cur);
+    return 0;
 }
 
-
+static void diag(int avoid)__attribute__((unused));
 static void
 diag(int avoid){
     print_list(NULL);
@@ -118,7 +124,7 @@ _clock_check_swap(void) {
     cprintf("write Virt Page e in fifo_check_swap\n");
     *(unsigned char *)0x5000 = 0x0e;
     assert(pgfault_num==5);
-   // diag(0);
+    //diag(0);
     cprintf("write Virt Page b in fifo_check_swap\n");
     *(unsigned char *)0x2000 = 0x0b;
     assert(pgfault_num==5);

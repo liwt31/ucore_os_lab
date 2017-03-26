@@ -244,6 +244,10 @@ struct taskstate {
 #define PTE_AVAIL       0xE00                   // Available for software use
                                                 // The PTE_AVAIL bits aren't used by the kernel or interpreted by the
                                                 // hardware, so user processes are allowed to set them arbitrarily.
+#define PTE_ACCESSED(pte_p) (((*(pte_p)) & (PTE_A)) != 0)
+#define PTE_CLEAR_ACCESSED(pte_p) ((*(pte_p)) &= ~(PTE_A))
+#define PTE_DIRTY(pte_pp) (((*(pte_p)) & (PTE_D)) != 0)
+#define PTE_CLEAR_DIRTY(pte_p) ((*(pte_p) &= ~(PTE_D)))
 
 #define PTE_USER        (PTE_U | PTE_W | PTE_P)
 

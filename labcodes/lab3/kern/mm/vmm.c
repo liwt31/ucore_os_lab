@@ -366,11 +366,14 @@ do_pgfault(struct mm_struct *mm, uint32_t error_code, uintptr_t addr) {
     /*LAB3 EXERCISE 1: 2013012291*/
     pte_t *ptep = get_pte(mm->pgdir, addr, 1);              //(1) try to find a pte, if pte's PT(Page Table) isn't existed, then create a PT.
     if (ptep == NULL){
-        cprintf("Get pte for addr 0x%02x failed.\n", addr);
+        cprintf("Get pte for addr 0x%08x failed.\n", addr);
         goto failed;
     }
     if (*ptep == 0) {
-        pgdir_alloc_page(mm->pgdir, addr, perm);
+        if (pgdir_alloc_page(mm->pgdir, addr, perm) == NULL){
+            cprintf("Alloc page for 0x%08x failed.\n", addr);
+            goto failed;
+        }
     }
     else {
     /*LAB3 EXERCISE 2: 2013012291
@@ -394,14 +397,11 @@ do_pgfault(struct mm_struct *mm, uint32_t error_code, uintptr_t addr) {
             if (page != NULL) {
                 if (page_insert(mm->pgdir, page, addr, perm) != 0) {
                     free_page(page);
-                    return NULL;
+                    cprintf("Insert page 0x%08x to pte failed.\n");
+                    goto failed;
                 }
-                if (swap_init_ok){
-                    swap_map_swappable(mm, addr, page, 0);
-                    page->pra_vaddr=addr;
-                    assert(page_ref(page) == 1);
-                }
-
+                swap_map_swappable(mm, addr, page, 0);
+                page->pra_vaddr = addr;
             }
         }
         else {

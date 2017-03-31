@@ -2,13 +2,36 @@
 #include <x86.h>
 #include <stdio.h>
 #include <string.h>
-#include <mmu.h>
 #include <swap.h>
 #include <swap_clock.h>
 #include <list.h>
 
 list_entry_t pra_list_head;
 static list_entry_t *clock_arm;
+
+static void
+print_list(list_entry_t * head){
+    if ( head == NULL){
+        extern struct mm_struct *check_mm_struct;
+        head=(list_entry_t*) check_mm_struct->sm_priv;
+    }
+    cprintf("clock_arm: 0x%08x.\n", clock_arm);
+    cprintf("le addr      -   vaddr        -   DA bits\n");
+    list_entry_t *cur = head->next;
+    while(cur != head){
+        struct Page * page = le2page(cur, pra_page_link);
+        pte_t * pte_p = get_pte(check_mm_struct->pgdir, page->pra_vaddr, 0);
+        cprintf("0x%08x   -   0x%08x   -   %d%d\n", &page->pra_page_link, page->pra_vaddr, PTE_DIRTY(pte_p), PTE_ACCESSED(pte_p));
+        cur = cur->next;
+    }
+}
+
+static void diag(void)__attribute__((unused));
+static void
+diag(void){
+    print_list(NULL);
+}
+
 /*
  * (2) _clock_init_mm: init pra_list_head and let  mm->sm_priv point to the addr of pra_list_head.
  *              Now, From the memory control struct mm_struct, we can access FIFO PRA
@@ -21,22 +44,6 @@ _clock_init_mm(struct mm_struct *mm)
      clock_arm = &pra_list_head;
      //cprintf(" mm->sm_priv %x in clock_init_mm\n",mm->sm_priv);
      return 0;
-}
-static void
-print_list(list_entry_t * head){
-    if ( head == NULL){
-        extern struct mm_struct *check_mm_struct;
-        head=(list_entry_t*) check_mm_struct->sm_priv;
-    }
-    cprintf("head---> %x\n", head);
-    cprintf("head->prev---> %x\n", head->prev);
-    list_entry_t *cur = head->next;
-    while(cur != head){
-        struct Page * page = le2page(cur, pra_page_link);
-        pte_t * pte_p = get_pte(check_mm_struct->pgdir, page->pra_vaddr, 0);
-        cprintf("%x - %x - %d%d\n", page, page->pra_vaddr, PTE_DIRTY(pte_p), PTE_ACCESSED(pte_p));
-        cur = cur->next;
-    }
 }
 /*
  * (3)_clock_map_swappable: According FIFO PRA, we should link the most recent arrival page at the back of pra_list_head qeueue
@@ -73,7 +80,9 @@ _clock_swap_out_victim(struct mm_struct *mm, struct Page ** ptr_page, int in_tic
             continue;
         }
         clock_arm_page = le2page(clock_arm, pra_page_link);
-        pte_t *pte_p = get_pte(mm->pgdir, clock_arm_page->pra_vaddr, 0);
+        uintptr_t vaddr = clock_arm_page->pra_vaddr;
+        tlb_invalidate(mm->pgdir, vaddr);
+        pte_t *pte_p = get_pte(mm->pgdir, vaddr, 0);
         if(pte_p == NULL){
             panic("The page table entry for the page 0x%08x in swap manager does not exist", clock_arm_page);
         }
@@ -100,16 +109,6 @@ _clock_swap_out_victim(struct mm_struct *mm, struct Page ** ptr_page, int in_tic
     return 0;
 }
 
-static void diag(int avoid)__attribute__((unused));
-static void
-diag(int avoid){
-    print_list(NULL);
-    int i;
-    for (i = 0; i < 5 ; i++){
-        if (i == avoid) continue;
-        //cprintf("%x, ", *(unsigned char *)((1 + i) * 0x1000));
-    }
-}
 
 static int
 _clock_check_swap(void) {
@@ -118,21 +117,22 @@ _clock_check_swap(void) {
     *(unsigned char *)0x3000 = 0x0c;
     assert(pgfault_num==4);
     assert(check_mm_struct != NULL);
-    cprintf("write Virt Page a in fifo_check_swap\n");
+    cprintf("write Virt Page a in clock_check_swap\n");
     *(unsigned char *)0x1000 = 0x0a;
     assert(pgfault_num==4);
-    cprintf("write Virt Page d in fifo_check_swap\n");
+    cprintf("write Virt Page d in clock_check_swap\n");
     *(unsigned char *)0x4000 = 0x0d;
     assert(pgfault_num==4);
-    cprintf("write Virt Page b in fifo_check_swap\n");
+    cprintf("write Virt Page b in clock_check_swap\n");
     *(unsigned char *)0x2000 = 0x0b;
     assert(pgfault_num==4);
     //  After 4 page fault, there are 4 page in the swap manager, and
-    //  the arm of the clock is at its original position (head), the structure is
+    //  the arm of the clock is at the position where
+    //  the last element is inserted, the structure is
     //  head->a(1,1)->b(1,1)->c(1,1)->d(1,1)->head
-    //  ^  
-    diag(5);
-    cprintf("write Virt Page e in fifo_check_swap\n");
+    //                                ^  
+    diag();
+    cprintf("write Virt Page e in clock_check_swap\n");
     *(unsigned char *)0x5000 = 0x0e;
     assert(pgfault_num==5);
     //  Now e is written. A page should be swapped out, the arm of the clock would 
@@ -142,78 +142,82 @@ _clock_check_swap(void) {
     //  Now a would be selected to be swapped out, and the resulting list is
     //  head->e(1,1)->b(0,0)->c(0,0)->d(0,0)->head
     //        ^  
-    cprintf("---------------------------------\n");
-    extern struct mm_struct *check_mm_struct;
-    diag(0);
-    pte_t * pte_p = get_pte(check_mm_struct->pgdir, 0x2000, 0);
-    cprintf("%d%d\n", PTE_DIRTY(pte_p), PTE_ACCESSED(pte_p));
-    volatile unsigned char tmp = *(unsigned char *)0x2000;
-    *(unsigned char *)0x2000 = 'f';
-    cprintf("%c\n", *(unsigned char *)0x2000);
-    pte_p = get_pte(check_mm_struct->pgdir, 0x2000, 0);
-    cprintf("%d%d\n", PTE_DIRTY(pte_p), PTE_ACCESSED(pte_p));
-    diag(0);
-    cprintf("---------------------------------\n");
-    cprintf("write Virt Page b in fifo_check_swap\n");
+    diag();
+    cprintf("write Virt Page b in clock_check_swap\n");
     *(unsigned char *)0x2000 = 0x0b;
-    tmp = *(unsigned char *)0x2000;
     assert(pgfault_num==5);
     //  b is not swapped out, so no page fault happens, but its bits are set
     //  Note this behavior is different from FIFO
     //  head->e(1,1)->b(1,1)->c(0,0)->d(0,0)->head
     //        ^                  
-    diag(0);
-    cprintf("write Virt Page a in fifo_check_swap\n");
+    diag();
+    cprintf("write Virt Page a in clock_check_swap\n");
     *(unsigned char *)0x1000 = 0x0a;
     assert(pgfault_num==6);
     //  a has been swapped out, another page should sacrifice
     //  head->e(1,1)->b(0,1)->c(0,0)->d(0,0)->head
     //                        ^    
-    //  head->e(0,1)->b(0,1)->a(1,1)->d(0,0)->head
+    //  head->e(1,1)->b(0,1)->a(1,1)->d(0,0)->head
     //                        ^
-    diag(1);
-    cprintf("write Virt Page b in fifo_check_swap\n");
+    diag();
+    cprintf("write Virt Page b in clock_check_swap\n");
     *(unsigned char *)0x2000 = 0x0b;
     assert(pgfault_num==6);
     //  b is not swapped out. But bits are set
-    //  head->e(0,1)->b(1,1)->a(1,1)->d(0,0)->head
+    //  head->e(1,1)->b(1,1)->a(1,1)->d(0,0)->head
     //                        ^
-    diag(2);
-    cprintf("write Virt Page c in fifo_check_swap\n");
+    diag();
+    cprintf("write Virt Page c in clock_check_swap\n");
     *(unsigned char *)0x3000 = 0x0c;
     assert(pgfault_num==7);
     //  c has been swapped out, find sacrifice page and swap it out
-    //  head->e(0,1)->b(1,1)->a(1,1)->c(1,1)->head
+    //  head->e(1,1)->b(1,1)->a(1,1)->c(1,1)->head
     //                                ^    
-    diag(3);
-    cprintf("write Virt Page d in fifo_check_swap\n");
+    diag();
+    cprintf("write Virt Page d in clock_check_swap\n");
     *(unsigned char *)0x4000 = 0x0d;
     assert(pgfault_num==8);
     //  d is not in the list, find sacrifice page
-    //  head->e(0,0)->b(0,1)->a(0,0)->c(0,1)->head
+    //  head->e(0,0)->b(0,0)->a(0,0)->c(0,0)->head
     //        ^                                    
     //  Then swap it out
-    //  head->d(1,1)->b(0,1)->a(0,0)->c(0,1)->head
+    //  head->d(1,1)->b(0,0)->a(0,0)->c(0,0)->head
     //        ^                                    
-    diag(4);
-    cprintf("write Virt Page e in fifo_check_swap\n");
+    diag();
+    cprintf("write Virt Page e in clock_check_swap\n");
     *(unsigned char *)0x5000 = 0x0e;
     assert(pgfault_num==9);
     //  e is not in the list, swap a page out
-    //  head->d(1,1)->b(0,0)->e(1,1)->c(0,1)->head
-    //                        ^                                    
-    diag(1);
-    cprintf("write Virt Page a in fifo_check_swap\n");
+    //  head->d(1,1)->e(1,1)->a(0,0)->c(0,1)->head
+    //                ^                                          
+    diag();
+    cprintf("write Virt Page a in clock_check_swap\n");
     assert(*(unsigned char *)0x1000 == 0x0a);
     *(unsigned char *)0x1000 = 0x0a;
-    assert(pgfault_num==10);
-    //  a is not in the list, swap a page out
-    //  head->d(0,1)->a(1,1)->e(1,1)->c(0,0)->head
+    assert(pgfault_num==9);
+    //  a is in the list
+    //  head->d(1,1)->e(1,1)->a(1,1)->c(0,0)->head
     //                ^                                            
-    diag(1);
+    diag();
+    cprintf("read Virt Page c in clock_check_swap\n");
+    unsigned char tmp_char __attribute__((unused));
+    tmp_char = *(unsigned char *)0x3000;
+    assert(pgfault_num==9);
+    //  a is in the list
+    //  head->d(1,1)->e(1,1)->a(1,1)->c(0,1)->head
+    //                ^                                            
+    diag();
+    cprintf("read Virt Page b in clock_check_swap\n");
+    tmp_char= *(unsigned char *)0x2000;
+    assert(pgfault_num==10);
+    //  b is not in the list, find a sacrifice page 
+    //  head->d(0,1)->e(0,1)->a(0,0)->c(0,0)->head
+    //                                ^                             
+    //  then swap it out
+    //  head->d(0,1)->e(0,1)->a(0,0)->b(0,1)->head
+    diag();
     return 0;
 }
-
 
 static int
 _clock_init(void)

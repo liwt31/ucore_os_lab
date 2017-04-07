@@ -78,7 +78,6 @@ default_init_memmap(struct Page *base, size_t n) {
     base->property = n;
     nr_free += n;
     list_add(&free_list, &(base->page_link));
-    cprintf("0x%08x\n", free_list);
 }
 
 static struct Page *

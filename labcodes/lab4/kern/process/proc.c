@@ -305,17 +305,24 @@ do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf) {
     if ((proc = alloc_proc()) == NULL){
         goto fork_out;
     }
+	proc->parent = current;
     if ((setup_kstack(proc)) == -E_NO_MEM){
         goto bad_fork_cleanup_proc;
     }
     if (copy_mm(clone_flags, proc) != 0){
         goto bad_fork_cleanup_kstack;
     }
-    copy_thread(proc, stack ? stack:proc->kstack, tf);
-    proc->pid = get_pid();
-    hash_proc(proc);
-    list_add(&proc_list, &proc->list_link);
-    wakeup_proc(proc);
+    copy_thread(proc, stack ? stack:proc->kstack + KSTACKSIZE, tf);
+	bool intr_flag;
+	local_intr_save(intr_flag);
+	{
+		proc->pid = get_pid();
+		hash_proc(proc);
+		list_add(&proc_list, &proc->list_link);
+		nr_process ++;
+	}
+	local_intr_restore(intr_flag);
+	wakeup_proc(proc);
     ret = proc->pid;
 fork_out:
     return ret;

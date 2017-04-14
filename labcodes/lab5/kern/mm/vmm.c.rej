@@ -1,0 +1,36 @@
+--- home/wtli/OS/OSbak/labcodes/lab4/kern/mm/vmm.c	2017-02-26 17:12:48.619510661 +0800
++++ kern/mm/vmm.c	2017-03-31 20:00:09.565764303 +0800
+@@ -384,19 +388,28 @@
+     *    page_insert ： build the map of phy addr of an Page with the linear addr la
+     *    swap_map_swappable ： set the page swappable
+     */
++        //(1）According to the mm AND addr, try to load the content of right disk page
++        //    into the memory which page managed.
++        //(2) According to the mm, addr AND page, setup the map of phy addr <---> logical addr
++        //(3) make the page swappable.
+         if(swap_init_ok) {
+             struct Page *page=NULL;
+-                                    //(1）According to the mm AND addr, try to load the content of right disk page
+-                                    //    into the memory which page managed.
+-                                    //(2) According to the mm, addr AND page, setup the map of phy addr <---> logical addr
+-                                    //(3) make the page swappable.
++            swap_in(mm, addr, &page);
++            if (page != null) {
++                if (page_insert(mm->pgdir, page, addr, perm) != 0) {
++                    free_page(page);
++                    cprintf("insert page 0x%08x to pte failed.\n");
++                    goto failed;
++                }
++                swap_map_swappable(mm, addr, page, 0);
++                page->pra_vaddr = addr;
++            }
+         }
+         else {
+             cprintf("no swap_init_ok but ptep is %x, failed\n",*ptep);
+             goto failed;
+         }
+    }
+-#endif
+    ret = 0;
+ failed:
+     return ret;

@@ -363,7 +363,7 @@ pmm_init(void) {
 // return vaule: the kernel virtual address of this pte
 pte_t *
 get_pte(pde_t *pgdir, uintptr_t la, bool create) {
-    /* LAB2 EXERCISE 2: YOUR CODE
+    /* LAB2 EXERCISE 2: 2013012291
      *
      * If you need to visit a physical address, please use KADDR()
      * please read pmm.h for useful macros
@@ -396,6 +396,21 @@ get_pte(pde_t *pgdir, uintptr_t la, bool create) {
     }
     return NULL;          // (8) return page table entry
 #endif
+    pde_t *pdep = pgdir + PDX(la);
+    if (!(*pdep & PTE_P)){
+        if (!create){
+            return NULL;
+        }
+        struct Page *page_p = alloc_page();
+        if (!page_p){
+            return NULL;
+        }
+        set_page_ref(page_p, 1);
+        uintptr_t ptp = page2pa(page_p);
+        memset(KADDR(ptp), 0, PGSIZE);
+        *pdep = (uint32_t)ptp + PTE_USER;
+    }
+    return KADDR(PDE_ADDR(*pdep) + 4 * PTX(la)); // use a constant to mimic pointer operation
 }
 
 //get_page - get related Page struct for linear address la using PDT pgdir
@@ -416,7 +431,7 @@ get_page(pde_t *pgdir, uintptr_t la, pte_t **ptep_store) {
 //note: PT is changed, so the TLB need to be invalidate 
 static inline void
 page_remove_pte(pde_t *pgdir, uintptr_t la, pte_t *ptep) {
-    /* LAB2 EXERCISE 3: YOUR CODE
+    /* LAB2 EXERCISE 3: 2013012291
      *
      * Please check if ptep is valid, and tlb must be manually updated if mapping is updated
      *
@@ -441,6 +456,14 @@ page_remove_pte(pde_t *pgdir, uintptr_t la, pte_t *ptep) {
                                   //(6) flush tlb
     }
 #endif
+    if (*ptep & PTE_P){
+        struct Page *page_p = pte2page(*ptep);
+        if (page_ref_dec(page_p) == 0){
+            free_page(page_p);
+        }
+        *ptep = 0;
+        tlb_invalidate(pgdir, la);
+    }
 }
 
 void
@@ -500,29 +523,31 @@ copy_range(pde_t *to, pde_t *from, uintptr_t start, uintptr_t end, bool share) {
             if ((nptep = get_pte(to, start, 1)) == NULL) {
                 return -E_NO_MEM;
             }
-        uint32_t perm = (*ptep & PTE_USER);
-        //get page from ptep
-        struct Page *page = pte2page(*ptep);
-        // alloc a page for process B
-        struct Page *npage=alloc_page();
-        assert(page!=NULL);
-        assert(npage!=NULL);
-        int ret=0;
-        /* LAB5:EXERCISE2 YOUR CODE
-         * replicate content of page to npage, build the map of phy addr of nage with the linear addr start
-         *
-         * Some Useful MACROs and DEFINEs, you can use them in below implementation.
-         * MACROs or Functions:
-         *    page2kva(struct Page *page): return the kernel vritual addr of memory which page managed (SEE pmm.h)
-         *    page_insert: build the map of phy addr of an Page with the linear addr la
-         *    memcpy: typical memory copy function
-         *
-         * (1) find src_kvaddr: the kernel virtual address of page
-         * (2) find dst_kvaddr: the kernel virtual address of npage
-         * (3) memory copy from src_kvaddr to dst_kvaddr, size is PGSIZE
-         * (4) build the map of phy addr of  nage with the linear addr start
-         */
-        assert(ret == 0);
+			uint32_t perm = (*ptep & PTE_USER);
+			//get page from ptep
+			struct Page *page = pte2page(*ptep);
+			// alloc a page for process B
+			struct Page *npage=alloc_page();
+			assert(page!=NULL);
+			assert(npage!=NULL);
+			int ret=0;
+			/* LAB5:EXERCISE2 2013012291
+			 * replicate content of page to npage, build the map of phy addr of nage with the linear addr start
+			 *
+			 * Some Useful MACROs and DEFINEs, you can use them in below implementation.
+			 * MACROs or Functions:
+			 *    page2kva(struct Page *page): return the kernel vritual addr of memory which page managed (SEE pmm.h)
+			 *    page_insert: build the map of phy addr of an Page with the linear addr la
+			 *    memcpy: typical memory copy function
+			 *
+			 * (1) find src_kvaddr: the kernel virtual address of page
+			 * (2) find dst_kvaddr: the kernel virtual address of npage
+			 * (3) memory copy from src_kvaddr to dst_kvaddr, size is PGSIZE
+			 * (4) build the map of phy addr of  nage with the linear addr start
+			 */
+			memcpy(page2kva(npage), page2kva(page), PGSIZE);
+			page_insert(to, npage, start, perm);
+			assert(ret == 0);
         }
         start += PGSIZE;
     } while (start != 0 && start < end);

@@ -1,6 +1,6 @@
-diff -Nur ../../OSbak/labcodes/lab2/boot/bootasm.S lab2/boot/bootasm.S
---- ../../OSbak/labcodes/lab2/boot/bootasm.S	2017-02-26 17:12:48.615510665 +0800
-+++ lab2/boot/bootasm.S	2017-03-07 17:25:00.925475684 +0800
+diff -Nur ../../OSbak/labcodes/lab3/boot/bootasm.S lab3/boot/bootasm.S
+--- ../../OSbak/labcodes/lab3/boot/bootasm.S	2017-02-26 17:12:48.619510661 +0800
++++ lab3/boot/bootasm.S	2017-03-18 17:47:05.900316619 +0800
 @@ -26,7 +26,8 @@
      # Enable A20:
      #  For backwards compatibility with the earliest PCs, physical
@@ -38,120 +38,9 @@ diff -Nur ../../OSbak/labcodes/lab2/boot/bootasm.S lab2/boot/bootasm.S
  gdtdesc:
      .word 0x17                                      # sizeof(gdt) - 1
      .long gdt                                       # address gdt
-diff -Nur ../../OSbak/labcodes/lab2/boot/bootasm.S.orig lab2/boot/bootasm.S.orig
---- ../../OSbak/labcodes/lab2/boot/bootasm.S.orig	1970-01-01 08:00:00.000000000 +0800
-+++ lab2/boot/bootasm.S.orig	2017-03-07 16:49:16.561509345 +0800
-@@ -0,0 +1,107 @@
-+#include <asm.h>
-+
-+# Start the CPU: switch to 32-bit protected mode, jump into C.
-+# The BIOS loads this code from the first sector of the hard disk into
-+# memory at physical address 0x7c00 and starts executing in real mode
-+# with %cs=0 %ip=7c00.
-+
-+.set PROT_MODE_CSEG,        0x8                     # kernel code segment selector
-+.set PROT_MODE_DSEG,        0x10                    # kernel data segment selector
-+.set CR0_PE_ON,             0x1                     # protected mode enable flag
-+.set SMAP,                  0x534d4150
-+
-+# start address should be 0:7c00, in real mode, the beginning address of the running bootloader
-+.globl start
-+start:
-+.code16                                             # Assemble for 16-bit mode
-+    cli                                             # Disable interrupts
-+    cld                                             # String operations increment
-+
-+    # Set up the important data segment registers (DS, ES, SS).
-+    xorw %ax, %ax                                   # Segment number zero
-+    movw %ax, %ds                                   # -> Data Segment
-+    movw %ax, %es                                   # -> Extra Segment
-+    movw %ax, %ss                                   # -> Stack Segment
-+
-+    # Enable A20:
-+    #  For backwards compatibility with the earliest PCs, physical
-+    #  address line 20 is tied low, so that addresses higher than
-+    #  1MB wrap around to zero by default. This code undoes this.
-+seta20.1:
-+    inb $0x64, %al                                  # Wait for not busy(8042 input buffer empty).
-+    testb $0x2, %al
-+    jnz seta20.1
-+
-+    movb $0xd1, %al                                 # 0xd1 -> port 0x64
-+    outb %al, $0x64                                 # 0xd1 means: write data to 8042's P2 port
-+
-+seta20.2:
-+    inb $0x64, %al                                  # Wait for not busy(8042 input buffer empty).
-+    testb $0x2, %al
-+    jnz seta20.2
-+
-+    movb $0xdf, %al                                 # 0xdf -> port 0x60
-+    outb %al, $0x60                                 # 0xdf = 11011111, means set P2's A20 bit(the 1 bit) to 1
-+
-+probe_memory:
-+    movl $0, 0x8000
-+    xorl %ebx, %ebx
-+    movw $0x8004, %di
-+start_probe:
-+    movl $0xE820, %eax
-+    movl $20, %ecx
-+    movl $SMAP, %edx
-+    int $0x15
-+    jnc cont
-+    movw $12345, 0x8000
-+    jmp finish_probe
-+cont:
-+    addw $20, %di
-+    incl 0x8000
-+    cmpl $0, %ebx
-+    jnz start_probe
-+finish_probe:
-+
-+    # Switch from real to protected mode, using a bootstrap GDT
-+    # and segment translation that makes virtual addresses
-+    # identical to physical addresses, so that the
-+    # effective memory map does not change during the switch.
-+    lgdt gdtdesc
-+    movl %cr0, %eax
-+    orl $CR0_PE_ON, %eax
-+    movl %eax, %cr0
-+
-+    # Jump to next instruction, but in 32-bit code segment.
-+    # Switches processor into 32-bit mode.
-+    ljmp $PROT_MODE_CSEG, $protcseg
-+
-+.code32                                             # Assemble for 32-bit mode
-+protcseg:
-+    # Set up the protected-mode data segment registers
-+    movw $PROT_MODE_DSEG, %ax                       # Our data segment selector
-+    movw %ax, %ds                                   # -> DS: Data Segment
-+    movw %ax, %es                                   # -> ES: Extra Segment
-+    movw %ax, %fs                                   # -> FS
-+    movw %ax, %gs                                   # -> GS
-+    movw %ax, %ss                                   # -> SS: Stack Segment
-+
-+    # Set up the stack pointer and call into C. The stack region is from 0--start(0x7c00)
-+    movl $0x0, %ebp
-+    movl $start, %esp
-+    call bootmain
-+
-+    # If bootmain returns (it shouldn't), loop.
-+spin:
-+    jmp spin
-+
-+.data
-+# Bootstrap GDT
-+.p2align 2                                          # force 4 byte alignment
-+gdt:
-+    SEG_NULLASM                                     # null seg
-+    SEG_ASM(STA_X|STA_R, 0x0, 0xffffffff)           # code seg for bootloader and kernel
-+    SEG_ASM(STA_W, 0x0, 0xffffffff)                 # data seg for bootloader and kernel
-+
-+gdtdesc:
-+    .word 0x17                                      # sizeof(gdt) - 1
-+    .long gdt                                       # address gdt
-diff -Nur ../../OSbak/labcodes/lab2/boot/bootmain.c lab2/boot/bootmain.c
---- ../../OSbak/labcodes/lab2/boot/bootmain.c	2017-02-26 17:12:48.615510665 +0800
-+++ lab2/boot/bootmain.c	2017-03-07 17:25:00.925475684 +0800
+diff -Nur ../../OSbak/labcodes/lab3/boot/bootmain.c lab3/boot/bootmain.c
+--- ../../OSbak/labcodes/lab3/boot/bootmain.c	2017-02-26 17:12:48.619510661 +0800
++++ lab3/boot/bootmain.c	2017-03-18 17:47:05.900316619 +0800
 @@ -37,6 +37,7 @@
  static void
  waitdisk(void) {
@@ -203,9 +92,9 @@ diff -Nur ../../OSbak/labcodes/lab2/boot/bootmain.c lab2/boot/bootmain.c
          goto bad;
      }
  
-diff -Nur ../../OSbak/labcodes/lab2/.check_pmm.log lab2/.check_pmm.log
---- ../../OSbak/labcodes/lab2/.check_pmm.log	1970-01-01 08:00:00.000000000 +0800
-+++ lab2/.check_pmm.log	2017-03-18 17:09:44.401583780 +0800
+diff -Nur ../../OSbak/labcodes/lab3/.check_pmm.log lab3/.check_pmm.log
+--- ../../OSbak/labcodes/lab3/.check_pmm.log	1970-01-01 08:00:00.000000000 +0800
++++ lab3/.check_pmm.log	2017-03-18 17:47:05.900316619 +0800
 @@ -0,0 +1,57 @@
 +(THU.CST) os is loading ...
 +
@@ -265,9 +154,112 @@ diff -Nur ../../OSbak/labcodes/lab2/.check_pmm.log lab2/.check_pmm.log
 +Type 'help' for a list of commands.
 +K> 
 \ No newline at end of file
-diff -Nur ../../OSbak/labcodes/lab2/kern/debug/kdebug.c lab2/kern/debug/kdebug.c
---- ../../OSbak/labcodes/lab2/kern/debug/kdebug.c	2017-02-26 17:12:48.615510665 +0800
-+++ lab2/kern/debug/kdebug.c	2017-03-07 17:25:00.925475684 +0800
+diff -Nur ../../OSbak/labcodes/lab3/.check_swap.log lab3/.check_swap.log
+--- ../../OSbak/labcodes/lab3/.check_swap.log	1970-01-01 08:00:00.000000000 +0800
++++ lab3/.check_swap.log	2017-03-26 20:59:42.152018476 +0800
+@@ -0,0 +1,98 @@
++(THU.CST) os is loading ...
++
++Special kernel symbols:
++  entry  0xc010002a (phys)
++  etext  0xc0108565 (phys)
++  edata  0xc0120a60 (phys)
++  end    0xc0121b5c (phys)
++Kernel executable memory footprint: 135KB
++ebp:0xc011ff48 eip:0xc0100a6e args:0x00010094 0x00010094 0xc011ff78 0xc01000b8 
++    kern/debug/kdebug.c:309: print_stackframe+21
++ebp:0xc011ff58 eip:0xc0100d7f args:0x00000000 0x00000000 0x00000000 0xc011ffc8 
++    kern/debug/kmonitor.c:129: mon_backtrace+10
++ebp:0xc011ff78 eip:0xc01000b8 args:0x00000000 0xc011ffa0 0xffff0000 0xc011ffa4 
++    kern/init/init.c:58: grade_backtrace2+19
++ebp:0xc011ff98 eip:0xc01000da args:0x00000000 0xffff0000 0xc011ffc4 0x0000002a 
++    kern/init/init.c:63: grade_backtrace1+27
++ebp:0xc011ffb8 eip:0xc01000f7 args:0x00000000 0xc010002a 0xffff0000 0xc010006d 
++    kern/init/init.c:68: grade_backtrace0+19
++ebp:0xc011ffd8 eip:0xc0100118 args:0x00000000 0x00000000 0x00000000 0xc0108580 
++    kern/init/init.c:73: grade_backtrace+26
++ebp:0xc011fff8 eip:0xc010007a args:0x00000000 0x00000000 0x0000ffff 0x40cf9a00 
++    kern/init/init.c:32: kern_init+79
++memory management: default_pmm_manager
++e820map:
++  memory: 0009fc00, [00000000, 0009fbff], type = 1.
++  memory: 00000400, [0009fc00, 0009ffff], type = 2.
++  memory: 00010000, [000f0000, 000fffff], type = 2.
++  memory: 07ee0000, [00100000, 07fdffff], type = 1.
++  memory: 00020000, [07fe0000, 07ffffff], type = 2.
++  memory: 00040000, [fffc0000, ffffffff], type = 2.
++check_alloc_page() succeeded!
++check_pgdir() succeeded!
++check_boot_pgdir() succeeded!
++-------------------- BEGIN --------------------
++PDE(0e0) c0000000-f8000000 38000000 urw
++  |-- PTE(38000) c0000000-f8000000 38000000 -rw
++PDE(001) fac00000-fb000000 00400000 -rw
++  |-- PTE(000e0) faf00000-fafe0000 000e0000 urw
++  |-- PTE(00001) fafeb000-fafec000 00001000 -rw
++--------------------- END ---------------------
++check_vma_struct() succeeded!
++page fault at 0x00000100: K/W [no page found].
++check_pgfault() succeeded!
++check_vmm() succeeded.
++ide 0:      10000(sectors), 'QEMU HARDDISK'.
++ide 1:     262144(sectors), 'QEMU HARDDISK'.
++SWAP: manager = fifo swap manager
++BEGIN check_swap: count 1, total 31965
++setup Page Table for vaddr 0X1000, so alloc a page
++setup Page Table vaddr 0~4MB OVER!
++set up init env for check_swap begin!
++page fault at 0x00001000: K/W [no page found].
++page fault at 0x00002000: K/W [no page found].
++page fault at 0x00003000: K/W [no page found].
++page fault at 0x00004000: K/W [no page found].
++set up init env for check_swap over!
++write Virt Page c in fifo_check_swap
++write Virt Page a in fifo_check_swap
++write Virt Page d in fifo_check_swap
++write Virt Page b in fifo_check_swap
++write Virt Page e in fifo_check_swap
++page fault at 0x00005000: K/W [no page found].
++swap_out: i 0, store page in vaddr 0x1000 to disk swap entry 2
++write Virt Page b in fifo_check_swap
++write Virt Page a in fifo_check_swap
++page fault at 0x00001000: K/W [no page found].
++swap_out: i 0, store page in vaddr 0x2000 to disk swap entry 3
++swap_in: load disk swap entry 2 with swap_page in vadr 0x1000
++write Virt Page b in fifo_check_swap
++page fault at 0x00002000: K/W [no page found].
++swap_out: i 0, store page in vaddr 0x3000 to disk swap entry 4
++swap_in: load disk swap entry 3 with swap_page in vadr 0x2000
++write Virt Page c in fifo_check_swap
++page fault at 0x00003000: K/W [no page found].
++swap_out: i 0, store page in vaddr 0x4000 to disk swap entry 5
++swap_in: load disk swap entry 4 with swap_page in vadr 0x3000
++write Virt Page d in fifo_check_swap
++page fault at 0x00004000: K/W [no page found].
++swap_out: i 0, store page in vaddr 0x5000 to disk swap entry 6
++swap_in: load disk swap entry 5 with swap_page in vadr 0x4000
++write Virt Page e in fifo_check_swap
++page fault at 0x00005000: K/W [no page found].
++swap_out: i 0, store page in vaddr 0x1000 to disk swap entry 2
++swap_in: load disk swap entry 6 with swap_page in vadr 0x5000
++write Virt Page a in fifo_check_swap
++page fault at 0x00001000: K/R [no page found].
++swap_out: i 0, store page in vaddr 0x2000 to disk swap entry 3
++swap_in: load disk swap entry 2 with swap_page in vadr 0x1000
++count is 0, total is 7
++check_swap() succeeded!
++++ setup timer interrupts
++100 ticks
++End of Test.
++kernel panic at kern/trap/trap.c:20:
++    EOT: kernel seems ok.
++Welcome to the kernel debug monitor!!
++Type 'help' for a list of commands.
++K> 
+\ No newline at end of file
+diff -Nur ../../OSbak/labcodes/lab3/kern/debug/kdebug.c lab3/kern/debug/kdebug.c
+--- ../../OSbak/labcodes/lab3/kern/debug/kdebug.c	2017-02-26 17:12:48.619510661 +0800
++++ lab3/kern/debug/kdebug.c	2017-03-18 17:47:05.900316619 +0800
 @@ -293,7 +293,7 @@
   * */
  void
@@ -299,19 +291,18 @@ diff -Nur ../../OSbak/labcodes/lab2/kern/debug/kdebug.c lab2/kern/debug/kdebug.c
 +    }
  }
  
-diff -Nur ../../OSbak/labcodes/lab2/kern/init/init.c lab2/kern/init/init.c
---- ../../OSbak/labcodes/lab2/kern/init/init.c	2017-02-26 17:12:48.615510665 +0800
-+++ lab2/kern/init/init.c	2017-03-07 17:25:00.925475684 +0800
-@@ -38,7 +38,7 @@
- 
+diff -Nur ../../OSbak/labcodes/lab3/kern/init/init.c lab3/kern/init/init.c
+--- ../../OSbak/labcodes/lab3/kern/init/init.c	2017-02-26 17:12:48.619510661 +0800
++++ lab3/kern/init/init.c	2017-03-20 20:34:34.513782298 +0800
+@@ -47,6 +47,7 @@
      //LAB1: CAHLLENGE 1 If you try to do it, uncomment lab1_switch_test()
      // user/kernel mode switch test
--    //lab1_switch_test();
-+    lab1_switch_test();
+     //lab1_switch_test();
++    // commented when doing lab3. Introduce protection fault
  
      /* do nothing */
      while (1);
-@@ -85,11 +85,28 @@
+@@ -93,11 +94,28 @@
  static void
  lab1_switch_to_user(void) {
      //LAB1 CHALLENGE 1 : TODO
@@ -340,9 +331,9 @@ diff -Nur ../../OSbak/labcodes/lab2/kern/init/init.c lab2/kern/init/init.c
  }
  
  static void
-diff -Nur ../../OSbak/labcodes/lab2/kern/mm/default_pmm.c lab2/kern/mm/default_pmm.c
---- ../../OSbak/labcodes/lab2/kern/mm/default_pmm.c	2017-02-26 17:12:48.615510665 +0800
-+++ lab2/kern/mm/default_pmm.c	2017-03-18 17:09:34.273578694 +0800
+diff -Nur ../../OSbak/labcodes/lab3/kern/mm/default_pmm.c lab3/kern/mm/default_pmm.c
+--- ../../OSbak/labcodes/lab3/kern/mm/default_pmm.c	2017-02-26 17:12:48.619510661 +0800
++++ lab3/kern/mm/default_pmm.c	2017-03-18 17:47:05.900316619 +0800
 @@ -9,7 +9,7 @@
     usually split, and the remainder added to the list as another free block.
     Please see Page 196~198, Section 8.2 of Yan Wei Min's chinese book "Data Structure -- C programming language"
@@ -406,10 +397,10 @@ diff -Nur ../../OSbak/labcodes/lab2/kern/mm/default_pmm.c lab2/kern/mm/default_p
  }
  
  static size_t
-diff -Nur ../../OSbak/labcodes/lab2/kern/mm/memlayout.h lab2/kern/mm/memlayout.h
---- ../../OSbak/labcodes/lab2/kern/mm/memlayout.h	2017-02-26 17:12:48.615510665 +0800
-+++ lab2/kern/mm/memlayout.h	2017-03-12 20:05:17.412135228 +0800
-@@ -120,7 +120,7 @@
+diff -Nur ../../OSbak/labcodes/lab3/kern/mm/memlayout.h lab3/kern/mm/memlayout.h
+--- ../../OSbak/labcodes/lab3/kern/mm/memlayout.h	2017-02-26 17:12:48.619510661 +0800
++++ lab3/kern/mm/memlayout.h	2017-03-18 17:47:05.900316619 +0800
+@@ -123,7 +123,7 @@
  
  /* free_area_t - maintains a doubly linked list to record free (unused) pages */
  typedef struct {
@@ -418,28 +409,10 @@ diff -Nur ../../OSbak/labcodes/lab2/kern/mm/memlayout.h lab2/kern/mm/memlayout.h
      unsigned int nr_free;           // # of free pages in this free list
  } free_area_t;
  
-diff -Nur ../../OSbak/labcodes/lab2/kern/mm/pmm.c lab2/kern/mm/pmm.c
---- ../../OSbak/labcodes/lab2/kern/mm/pmm.c	2017-02-26 17:12:48.615510665 +0800
-+++ lab2/kern/mm/pmm.c	2017-03-13 22:17:05.756782260 +0800
-@@ -300,6 +300,7 @@
- 
-     // create boot_pgdir, an initial page directory(Page Directory Table, PDT)
-     boot_pgdir = boot_alloc_page();
-+    cprintf("%x\n", boot_pgdir);
-     memset(boot_pgdir, 0, PGSIZE);
-     boot_cr3 = PADDR(boot_pgdir);
- 
-@@ -318,7 +319,9 @@
- 
-     //temporary map: 
-     //virtual_addr 3G~3G+4M = linear_addr 0~4M = linear_addr 3G~3G+4M = phy_addr 0~4M     
-+    cprintf("%x\n", boot_pgdir[0]);
-     boot_pgdir[0] = boot_pgdir[PDX(KERNBASE)];
-+    cprintf("%x\n", boot_pgdir[0]);
- 
-     enable_paging();
- 
-@@ -347,7 +350,7 @@
+diff -Nur ../../OSbak/labcodes/lab3/kern/mm/pmm.c lab3/kern/mm/pmm.c
+--- ../../OSbak/labcodes/lab3/kern/mm/pmm.c	2017-02-26 17:12:48.619510661 +0800
++++ lab3/kern/mm/pmm.c	2017-03-18 22:08:00.511593628 +0800
+@@ -360,7 +360,7 @@
  // return vaule: the kernel virtual address of this pte
  pte_t *
  get_pte(pde_t *pgdir, uintptr_t la, bool create) {
@@ -448,7 +421,7 @@ diff -Nur ../../OSbak/labcodes/lab2/kern/mm/pmm.c lab2/kern/mm/pmm.c
       *
       * If you need to visit a physical address, please use KADDR()
       * please read pmm.h for useful macros
-@@ -380,6 +383,21 @@
+@@ -393,6 +393,21 @@
      }
      return NULL;          // (8) return page table entry
  #endif
@@ -470,7 +443,7 @@ diff -Nur ../../OSbak/labcodes/lab2/kern/mm/pmm.c lab2/kern/mm/pmm.c
  }
  
  //get_page - get related Page struct for linear address la using PDT pgdir
-@@ -400,7 +418,7 @@
+@@ -413,7 +428,7 @@
  //note: PT is changed, so the TLB need to be invalidate 
  static inline void
  page_remove_pte(pde_t *pgdir, uintptr_t la, pte_t *ptep) {
@@ -479,7 +452,7 @@ diff -Nur ../../OSbak/labcodes/lab2/kern/mm/pmm.c lab2/kern/mm/pmm.c
       *
       * Please check if ptep is valid, and tlb must be manually updated if mapping is updated
       *
-@@ -425,6 +443,14 @@
+@@ -438,6 +453,14 @@
                                    //(6) flush tlb
      }
  #endif
@@ -494,10 +467,197 @@ diff -Nur ../../OSbak/labcodes/lab2/kern/mm/pmm.c lab2/kern/mm/pmm.c
  }
  
  //page_remove - free an Page which is related linear address la and has an validated pte
-diff -Nur ../../OSbak/labcodes/lab2/kern/trap/trap.c lab2/kern/trap/trap.c
---- ../../OSbak/labcodes/lab2/kern/trap/trap.c	2017-02-26 17:12:48.615510665 +0800
-+++ lab2/kern/trap/trap.c	2017-03-18 17:09:42.013582589 +0800
-@@ -34,7 +34,7 @@
+diff -Nur ../../OSbak/labcodes/lab3/kern/mm/swap.c lab3/kern/mm/swap.c
+--- ../../OSbak/labcodes/lab3/kern/mm/swap.c	2017-02-26 17:12:48.619510661 +0800
++++ lab3/kern/mm/swap.c	2017-03-26 20:59:33.148081343 +0800
+@@ -123,7 +123,7 @@
+      assert(result!=NULL);
+ 
+      pte_t *ptep = get_pte(mm->pgdir, addr, 0);
+-     // cprintf("SWAP: load ptep %x swap entry %d to vaddr 0x%08x, page %x, No %d\n", ptep, (*ptep)>>8, addr, result, (result-pages));
++     //cprintf("SWAP: load ptep %x swap entry %d to vaddr 0x%08x, page %x, No %d\n", ptep, (*ptep)>>8, addr, result, (result-pages));
+     
+      int r;
+      if ((r = swapfs_read((*ptep), result)) != 0)
+diff -Nur ../../OSbak/labcodes/lab3/kern/mm/swap_fifo.c lab3/kern/mm/swap_fifo.c
+--- ../../OSbak/labcodes/lab3/kern/mm/swap_fifo.c	2017-02-26 17:12:48.619510661 +0800
++++ lab3/kern/mm/swap_fifo.c	2017-03-26 20:58:31.200580812 +0800
+@@ -38,6 +38,21 @@
+      //cprintf(" mm->sm_priv %x in fifo_init_mm\n",mm->sm_priv);
+      return 0;
+ }
++static void
++print_list(list_entry_t * head){
++    if ( head == NULL){
++        extern struct mm_struct *check_mm_struct;
++        head=(list_entry_t*) check_mm_struct->sm_priv;
++    }
++    cprintf("head---> %x\n", head);
++    cprintf("head->prev---> %x\n", head->prev);
++    list_entry_t *cur = head->next;
++    while(cur != head){
++        struct Page * page = le2page(cur, pra_page_link);
++        cprintf("%x - %x - %x\n", cur, page, page->pra_vaddr);
++        cur = cur->next;
++    }
++}
+ /*
+  * (3)_fifo_map_swappable: According FIFO PRA, we should link the most recent arrival page at the back of pra_list_head qeueue
+  */
+@@ -51,6 +66,7 @@
+     //record the page access situlation
+     /*LAB3 EXERCISE 2: YOUR CODE*/ 
+     //(1)link the most recent arrival page at the back of the pra_list_head qeueue.
++    list_add_before(head, entry);
+     return 0;
+ }
+ /*
+@@ -67,14 +83,28 @@
+      /*LAB3 EXERCISE 2: YOUR CODE*/ 
+      //(1)  unlink the  earliest arrival page in front of pra_list_head qeueue
+      //(2)  set the addr of addr of this page to ptr_page
++     *ptr_page = le2page(head->next, pra_page_link);
++     list_del(head->next);
+      return 0;
+ }
+ 
++
++static void
++diag(int avoid){
++    print_list(NULL);
++    int i;
++    for (i = 0; i < 5 ; i++){
++        if (i == avoid) continue;
++        cprintf("%x, ", *(unsigned char *)((1 + i) * 0x1000));
++    }
++}
++
+ static int
+ _fifo_check_swap(void) {
+     cprintf("write Virt Page c in fifo_check_swap\n");
+     *(unsigned char *)0x3000 = 0x0c;
+     assert(pgfault_num==4);
++    assert(check_mm_struct != NULL);
+     cprintf("write Virt Page a in fifo_check_swap\n");
+     *(unsigned char *)0x1000 = 0x0a;
+     assert(pgfault_num==4);
+@@ -84,29 +114,38 @@
+     cprintf("write Virt Page b in fifo_check_swap\n");
+     *(unsigned char *)0x2000 = 0x0b;
+     assert(pgfault_num==4);
++    //diag(5);
+     cprintf("write Virt Page e in fifo_check_swap\n");
+     *(unsigned char *)0x5000 = 0x0e;
+     assert(pgfault_num==5);
++   // diag(0);
+     cprintf("write Virt Page b in fifo_check_swap\n");
+     *(unsigned char *)0x2000 = 0x0b;
+     assert(pgfault_num==5);
++    //diag(0);
+     cprintf("write Virt Page a in fifo_check_swap\n");
+     *(unsigned char *)0x1000 = 0x0a;
+     assert(pgfault_num==6);
++    //diag(1);
+     cprintf("write Virt Page b in fifo_check_swap\n");
+     *(unsigned char *)0x2000 = 0x0b;
+     assert(pgfault_num==7);
++    //diag(2);
+     cprintf("write Virt Page c in fifo_check_swap\n");
+     *(unsigned char *)0x3000 = 0x0c;
+     assert(pgfault_num==8);
++    //diag(3);
+     cprintf("write Virt Page d in fifo_check_swap\n");
+     *(unsigned char *)0x4000 = 0x0d;
+     assert(pgfault_num==9);
++    //diag(4);
+     cprintf("write Virt Page e in fifo_check_swap\n");
+     *(unsigned char *)0x5000 = 0x0e;
+     assert(pgfault_num==10);
++    //diag(1);
+     cprintf("write Virt Page a in fifo_check_swap\n");
+     assert(*(unsigned char *)0x1000 == 0x0a);
++    //diag(1);
+     *(unsigned char *)0x1000 = 0x0a;
+     assert(pgfault_num==11);
+     return 0;
+diff -Nur ../../OSbak/labcodes/lab3/kern/mm/vmm.c lab3/kern/mm/vmm.c
+--- ../../OSbak/labcodes/lab3/kern/mm/vmm.c	2017-02-26 17:12:48.619510661 +0800
++++ lab3/kern/mm/vmm.c	2017-03-27 22:23:24.793710183 +0800
+@@ -346,8 +346,7 @@
+ 
+     ret = -E_NO_MEM;
+ 
+-    pte_t *ptep=NULL;
+-    /*LAB3 EXERCISE 1: YOUR CODE
++    /*LAB3 EXERCISE 1: 2013012291
+     * Maybe you want help comment, BELOW comments can help you finish the code
+     *
+     * Some Useful MACROs and DEFINEs, you can use them in below implementation.
+@@ -364,15 +363,20 @@
+     *   mm->pgdir : the PDT of these vma
+     *
+     */
+-#if 0
+-    /*LAB3 EXERCISE 1: YOUR CODE*/
+-    ptep = ???              //(1) try to find a pte, if pte's PT(Page Table) isn't existed, then create a PT.
++    /*LAB3 EXERCISE 1: 2013012291*/
++    pte_t *ptep = get_pte(mm->pgdir, addr, 1);              //(1) try to find a pte, if pte's PT(Page Table) isn't existed, then create a PT.
++    if (ptep == NULL){
++        cprintf("Get pte for addr 0x%08x failed.\n", addr);
++        goto failed;
++    }
+     if (*ptep == 0) {
+-                            //(2) if the phy addr isn't exist, then alloc a page & map the phy addr with logical addr
+-
++        if (pgdir_alloc_page(mm->pgdir, addr, perm) == NULL){
++            cprintf("Alloc page for 0x%08x failed.\n", addr);
++            goto failed;
++        }
+     }
+     else {
+-    /*LAB3 EXERCISE 2: YOUR CODE
++    /*LAB3 EXERCISE 2: 2013012291
+     * Now we think this pte is a  swap entry, we should load data from disk to a page with phy addr,
+     * and map the phy addr with logical addr, trigger swap manager to record the access situation of this page.
+     *
+@@ -383,19 +387,28 @@
+     *    page_insert ： build the map of phy addr of an Page with the linear addr la
+     *    swap_map_swappable ： set the page swappable
+     */
++        //(1）According to the mm AND addr, try to load the content of right disk page
++        //    into the memory which page managed.
++        //(2) According to the mm, addr AND page, setup the map of phy addr <---> logical addr
++        //(3) make the page swappable.
+         if(swap_init_ok) {
+             struct Page *page=NULL;
+-                                    //(1）According to the mm AND addr, try to load the content of right disk page
+-                                    //    into the memory which page managed.
+-                                    //(2) According to the mm, addr AND page, setup the map of phy addr <---> logical addr
+-                                    //(3) make the page swappable.
++            swap_in(mm, addr, &page);
++            if (page != NULL) {
++                if (page_insert(mm->pgdir, page, addr, perm) != 0) {
++                    free_page(page);
++                    cprintf("Insert page 0x%08x to pte failed.\n");
++                    goto failed;
++                }
++                swap_map_swappable(mm, addr, page, 0);
++                page->pra_vaddr = addr;
++            }
+         }
+         else {
+             cprintf("no swap_init_ok but ptep is %x, failed\n",*ptep);
+             goto failed;
+         }
+    }
+-#endif
+    ret = 0;
+ failed:
+     return ret;
+diff -Nur ../../OSbak/labcodes/lab3/kern/trap/trap.c lab3/kern/trap/trap.c
+--- ../../OSbak/labcodes/lab3/kern/trap/trap.c	2017-02-26 17:12:48.619510661 +0800
++++ lab3/kern/trap/trap.c	2017-03-26 20:59:39.484036862 +0800
+@@ -36,7 +36,7 @@
  /* idt_init - initialize IDT to each of the entry points in kern/trap/vectors.S */
  void
  idt_init(void) {
@@ -506,7 +666,7 @@ diff -Nur ../../OSbak/labcodes/lab2/kern/trap/trap.c lab2/kern/trap/trap.c
       /* (1) Where are the entry addrs of each Interrupt Service Routine (ISR)?
        *     All ISR's entry addrs are stored in __vectors. where is uintptr_t __vectors[] ?
        *     __vectors[] is in kern/trap/vector.S which is produced by tools/vector.c
-@@ -46,6 +46,13 @@
+@@ -48,6 +48,13 @@
        *     You don't know the meaning of this instruction? just google it! and check the libs/x86.h to know more.
        *     Notice: the argument of lidt is idt_pd. try to find it!
        */
@@ -520,10 +680,10 @@ diff -Nur ../../OSbak/labcodes/lab2/kern/trap/trap.c lab2/kern/trap/trap.c
  }
  
  static const char *
-@@ -141,12 +148,16 @@
- 
-     switch (tf->tf_trapno) {
-     case IRQ_OFFSET + IRQ_TIMER:
+@@ -180,12 +187,16 @@
+     LAB3 : If some page replacement algorithm(such as CLOCK PRA) need tick to change the priority of pages, 
+     then you can add code here. 
+ #endif
 -        /* LAB1 YOUR CODE : STEP 3 */
 +        /* LAB1 2013012291 : STEP 3 */
          /* handle the timer interrupt */
@@ -538,7 +698,7 @@ diff -Nur ../../OSbak/labcodes/lab2/kern/trap/trap.c lab2/kern/trap/trap.c
          break;
      case IRQ_OFFSET + IRQ_COM1:
          c = cons_getc();
-@@ -155,11 +166,26 @@
+@@ -194,11 +205,26 @@
      case IRQ_OFFSET + IRQ_KBD:
          c = cons_getc();
          cprintf("kbd [%03d] %c\n", c, c);
@@ -567,136 +727,105 @@ diff -Nur ../../OSbak/labcodes/lab2/kern/trap/trap.c lab2/kern/trap/trap.c
          break;
      case IRQ_OFFSET + IRQ_IDE1:
      case IRQ_OFFSET + IRQ_IDE2:
-diff -Nur ../../OSbak/labcodes/lab2/lab2-2013012291.md lab2/lab2-2013012291.md
---- ../../OSbak/labcodes/lab2/lab2-2013012291.md	1970-01-01 08:00:00.000000000 +0800
-+++ lab2/lab2-2013012291.md	2017-03-18 17:22:07.917776475 +0800
-@@ -0,0 +1,103 @@
-+# Lab 2
-+
-+## Ex0
-+
-+1. Create patch file from my own version of lab1 code and the original copy of lab1 code using 'diff -Nur ...' command and redirect the output to 'patch.diff'.
-+2. Apply the patch file to lab2 code using 'patch -d lab2 -p1 < patch.diff'. '-d' means the target is a directory and '-p1' means to ignore the first level of dir.
+diff -Nur ../../OSbak/labcodes/lab3/lab3-2013012291.md lab3/lab3-2013012291.md
+--- ../../OSbak/labcodes/lab3/lab3-2013012291.md	1970-01-01 08:00:00.000000000 +0800
++++ lab3/lab3-2013012291.md	2017-03-28 07:44:29.086339772 +0800
+@@ -0,0 +1,92 @@
++# Lab 3
 +
 +## Ex1
 +
-+#### How to implement Fisrt Fit Mem Algorithm?
++#### Map physical pages for virtural address.
 +
-+The framework is already implemented and I only need to modify a few of the codes.
-+1. In *default_init_memmap*, the flag of each page should be set to correct value.
-+    - Because all 'reserved'-bits are set to 1 prior to this function, whose purpose is to initiallize pages for allocation, those bits should be cleared.
-+    - On the other hand, because no allocation has actually taken place, all pages are available, which meas the bits for 'property' should be set to 1.
-+2. In *default_alloc_pages*, the 'property'-bits should be cleared because they are no longer available.
-+3. In *default_free_pages*, the 'property'-bits should be set because they are available again.
-+4. Test for 'make qemu' failed. Debugging info shows 
-+
-+        assert((p0 = alloc_page()) == p2 - 1);
-+
-+    went wrong. The bug should be fixed.
-+    - In the implemented FFMA code, the blocks freed is added to the beginning of free_area.
-+    - So, in the corresponding codes of *default_check*, where p0 is freed first and p1 is freed last, p1 would be at the beginning of the free_area list.
-+    - Which means when allocating p0 again, p1 is firstly considered, and the position is in p2 + 1 rather than p2 - 1.
-+    - As *default_check* must not be changed, the logic for FFMA should be adjusted to meet the requirement.
-+    - My implementation is to change *default_free_pages*. Freed pages are added to the last of the free_area list.
-+
-+#### How to improve the implemented FFMA?
-+
-+1. As shown in the video, FFMA should maintain a sorted list according to the address of the pages.
-+2. To implement this, whenever adding nodes to the list of free pages, always add after the page with the largest address in pages with smaller address than the node to be added. Various algorithms could achieve this goal.
-+3. If the list was kept sorted, the time complexity for combining free blocks after pages were freed would hopefully be reduced to O(1) rather than O(n). 
-+4. Besides, if FFMA was implemented this way, the bug in Ex1.4 should not happen.
-+
-+#### Differences from the answer provided
-+1. In the answer, the granulariry for page management in linked list is single page. For example, in *default_init_memmap* every page is linked to the list. 
-+2. In my code, the linked list contains blocks of continuous pages instead of single page. For example, in *default_init_memmap* only one page with the size of the free block is linked to the list.
-+3. It appears my code is faster because it saves time for list manipulation, on the otherhand the searching process for free blocks is faster.
-+
-+#### List of knowledge
-+1. Operation of the elegant linked list.
-+2. Implementation of a FFMA.
-+3. Meanings of bits in a page entry.
-+
-+## Ex2
-+
-+#### Implementation of *get_pte*.
-+
-+1. If the secondary page table containing the pte requested is present, then it's easy. 
-+    - Find the base of the secondary page table using page index of the directory table, then add the offset (index of secondary page) to the base, according to corresponding la of the page entry.
-+    - A tricky point is that entries in page directory table record physical base addresses for secondary tables, while the function should return virtual address of the secondary table entry. 
-+    - So after getting the (physical) address of the page table entry required, it should be converted to virtual address.
-+2. Otherwise, which means the secondary page table containing the pte requested is not present, then it need to be created first.
-+    - If the caller of *get_pte* does not allow creating page table, or attempt to create page table using *alloc_page* failed, the only option is to return NULL; 
-+    - After the memory for the page table is allocated, it should be initialized by setting all bits of the page table to 0, indicating all entries are currently unavailable.
-+    - And the ref number of the page containing the page table should be set to 1, because the newly allocated page is refered and only refered by a page directory entry.
-+    - The corresponding page directory entry (32 bit) should record this new page table by:
-+        - Recording the address of the page table in high 20 bits. This is enough for recording because the address of the page table is 4K aligned, which means the low 12 bits of the address are always 0.
-+        - Recording the permission of the page table in low 12 bits.
++1. Find the pte for the virtual address. If the pte does not exist, create one by setting the thrid parameter of *get_pte* to 1.
++2. Check the return of system call *get_pte*. If it returns NULL, go to "failed".
++3. Check the value of the returned page table entry.
++    - If it is newly created, i.e. the value equals to 0. It means the page entry as well as the page does not exist previously, an initialization of the page is requested.
++    - If it is not newly created, i.e. the value does not equal to 0. It means the page has been swapped out of the memory. Then it needs to be swapped back, which is the purpose of Ex2.
++3. Assuming the page entry is newly created, alloc a page for the address using *pgdir_alloc_page*, the parameter "perm" is defined prior in thie function.
++    1. *pgdir_alloc_page* will first alloc a page then initialize it according to its parameters.  
++    2. First the page should be connected to the page table by *page_insert* in *pmm.c*. This will map the page and set the permission bits in page table entry.
++    3. Then the page should be added to the list of swappable pages and record the virturl linear address in its pra_vaddr member variable, which is essential to the functionality of swap system.
 +
 +#### Meanings of components in page table directory and page table entries.
-+1. High 20 bits: the base address for next level of memory management module, which could be page table or page. These info are essensial for CPU to construct physical address from virtual address.
-+2. Low 12 bits: flags recording properties of the entry, including whether it presents, is writable, is changed and so on. The definations are in mmu.h. With these flags, ucore and CPU would be able to:
++- High 20 bits: the base address for next level of memory management module, which could be page table or page. These info are essensial for CPU to construct physical address from virtual address.
++- Low 12 bits: flags recording properties of the entry, including whether it presents, is writable, is changed and so on. The definations are in mmu.h. With these flags, ucore and CPU would be able to:
 +    - manage page table and cache page entry more effectively.
-+    - protect data from being accessed or wrote in a potentially hazardous manner.
++        - 2 bits particularly useful for page replacement algorithm are "accessed bit" and "dirty bit". The spirit of clock like algorithms is to check these bits and find the page that is not used recently.
++    - protect data from being accessed or written in a potentially hazardous manner.
 +
 +#### If an exception happens while accessing a page, what would hardware do next?
 +1. Protect the context, such as values of %eip and %cs.
 +2. Pass the control to the kernel, which would carry out corresponding (page fault) ISR.
++3. If the exception happends when carrying out ISR, goto **1.**. This might cause an infinite loop, until stack overflow.
 +
-+#### Differences from the answer provided
-+The difference is really small. At the last line I used a numeric calculation to get the address while the anwser establish an array first. I think with the comment mine is more readable.
++#### Difference with the answer provided.
++- Forgot to check return value for system call *pgidr_alloc_page*. Corrected now.
 +
-+#### List of knowledge
++#### List of knowledge.
++- Different conditions for a page fault.
++- Privilege control from vma_struct and page table entry.
 +
-+1. The relation among pages, addresses of pages, virtual address and physical address
-+2. The meaning of *page_ref*.
++## Ex2
 +
-+## Ex3
++#### Implementation of FIFO PRA.
 +
-+#### Implementation of *page_remove_pte*.
-+1. Check the argument. 
-+2. Find the page by pte, then break the connection between them. 
-+    - The ref number of the page is decreased by 1. If the ref number of the pages reaches 0, the page should be released.
-+    - the pte is erased by setting all bits of the pte to 0.
-+3. Invalidate the TLB for the pte (for it does not exist anymore).
++- Three parts of the code need to be implemented. The first two parts are in *swap_fifo.c*. And the last part is in *vmm.c*.
++- Code in *swap_fifo.c* concerns manipulation of linked list. The code will decide which page to be switched out when a page fault occurs, based on a FIFO PRA.
++    - The list is used as queue and new element is added before the head (sentinel) while the oldest element is deleted right after the head.
++    - *_fifo_swap_out_victim* effectively returns 2 values. The first reports the status of the function by direct "return". And the second is the address of the page to be swapped out by "*ptr_page = ...;". A pointer is used to pass more than 1 return value.
++- Code in *vmm.c* concerns how to swap in the requested page stored in disks. 
++    1. Check if the swap system is initialized properly.
++    2. Swap in the page calling *swap_in*. The page allocated for the swapped page is returned using a pointer. If there's not enough space in memory, another page should be swaped out.
++    2. The logic of the rest part of the code is the same with those in *pgdir_alloc_page*, so I simply copied that piece of code into this function.
++        - The job *pgdir_alloc_page* does has already been analyzed in **Ex1 -> Map physical pages for virtual address. -> 3.**. 
++        - The main difference between code in *pgdir_allc_page* and my copy is that in *pgdir_alloc_page* the page is allocated by *pgdir_alloc_page* while in my code the page is swapped in from disks.
++        - I also deleted some redundant codes, such as checking if swap system is initialized.
 +
-+#### The relationship between page array and page directory/table entry.
-+1. If the entry is present, then it is related to an item in the page array.
-+2. Because the relation between page array index and physical address is linear, with physical address recorded in the page directory/table entry, page array index could be obtained, as well as the address of the page array item.
++#### Design of extended clock PRA.
++- See **Challenge**.
++- The page to be swaped out should not be accessed or wrote recently, which could be judged by their accessed bit or dirty bit in pte. If they are both 0, then the page is suitable to be swapped out.
++- Swap in when the page is accessed. Swap out when there's not enough space in memory.
 +
-+#### What would you do if you want physical address identical to virtual address?
-+1. Change the address of kernel in link file to 0x00100000.
-+2. Change the base of the kernel in memlayout.h to 0x00000000.
-+3. Delete redundant protection when enabling page.
++#### Difference with the answer provided.
++- Bascially the same. Mine does return value check for *page_insert* while the answer doesn't. The answer set the return value of *do_pgfualt* as return value of *swap_in* while mine doesn't.
 +
-+#### Differences from the answer provided
-+Exactly the same.
++#### List of knowledge.
++- The right time to swap in and out pages.
++- Manipulation of double linked list. Queue. Use pointer to pass more than one return values.
++- Establishment of the relation between virtual address and physical address, especially recording virtual address in Page structure, which is not mentioned in delivered lectures.
 +
-+#### List of knowledge
-+1. The same as Ex2.
-+2. Controll over TLB.
-Binary files ../../OSbak/labcodes/lab2/.lab2-2013012291.md.swp and lab2/.lab2-2013012291.md.swp differ
-diff -Nur ../../OSbak/labcodes/lab2/tools/gdbinit.orig lab2/tools/gdbinit.orig
---- ../../OSbak/labcodes/lab2/tools/gdbinit.orig	1970-01-01 08:00:00.000000000 +0800
-+++ lab2/tools/gdbinit.orig	2017-03-07 17:25:00.925475684 +0800
-@@ -0,0 +1,3 @@
-+file bin/kernel
-+target remote :1234
-+break kern_init
-diff -Nur ../../OSbak/labcodes/lab2/tools/gdbinit.rej lab2/tools/gdbinit.rej
---- ../../OSbak/labcodes/lab2/tools/gdbinit.rej	1970-01-01 08:00:00.000000000 +0800
-+++ lab2/tools/gdbinit.rej	2017-03-07 17:25:00.925475684 +0800
-@@ -0,0 +1,8 @@
-+--- ../OSbak/labcodes/lab1/tools/gdbinit	2017-02-26 17:12:48.615510665 +0800
-++++ tools/gdbinit	2017-02-26 16:46:42.024296757 +0800
-+@@ -1,4 +1,5 @@
-+ file bin/kernel
-++set architecture i8086
-+ target remote :1234
-+ break kern_init
-+-continue+continue
-diff -Nur ../../OSbak/labcodes/lab2/tools/sign.c lab2/tools/sign.c
---- ../../OSbak/labcodes/lab2/tools/sign.c	2017-02-26 17:12:48.619510661 +0800
-+++ lab2/tools/sign.c	2017-03-07 17:25:00.925475684 +0800
++## Challenge
++
++#### Implementation of extended clock PRA.
++
++##### Overview.
++- My code is in directory lab3_clock. The directory is copied from a completed version of lab3, and I changed below listed files.
++- In *mmu.h*, macros controlling pte, or more specifically, reading and clearing accessed bit and dirty bit are implemented. 
++- In *swap.c*, when initializing swap manager, set *swap_manager_clock* as the manager.
++- Create *swap_clock.c/h* and implement the *swap_manager_clock*. Delete redundant *swap_fifo.c/h*.
++
++##### Details of the implementation.
++1. Decalre a global static variable *clock_arm*, which is a list_entry_t pointer, acting as the arm in the clock. In *_clock_init_mm* it is initialized to be the head of the page list.
++2. When choosing victim page, find the first one whose accessed bit and dirty bit are 0.
++    1. First move the arm to the next position in the clock. If it points to the head, skip the position and enter the next cycle.
++    2. Find the pte of the virtual address requested according to *pra_vaddr* in the Page structure recording the virtual address mapped to the page.
++    3. Consider accessed bit and dirty bit of ptes in swap manager and find the right one to be swapped out. 
++        - It should be taken into account that CPU would preferably change the accessed bit and dirty bit in the pte in TLB (if exists) rather than the pte in memory accessable by OS.
++        - So calling *tlb_invalidate* to invalidate the pte in TLB before evaluation of the bits is necessary. This would sync the content, aka accessed bit and dirty bit of pte between TLB and memory.
++        - If one of bits is 1, i.e. the page is visited or written recently, clear it, move to next position and start agagin.
++        - If both of accessed bit and dirty bit are 0, then the page is suitable to be swaped out, record it and set the clock arm to the previous position of this page.
++3. When adding new page to the list in *_clock_map_swappable*, firstly add it after the arm of the clock, then set the arm to it.
++    - In this way, the newly added page would be the last to visit when the arm is running around a clock circle starting from this position. This would make new pages stay in the list longer.
++4. I also implemented *diag* and *print_list* for debugging.
++
++##### Test cases.
++- Test cases are designed and implemented in *_clock_check_swap*. The details of the test could be found in the comments in the function.
++- Enable printing list in *diag* and the debugging output will be in great agreement with theoretical prediction in the comments mentioned above.
++- The test cases are basically the same with those in *_fifo_chekc_swap*, however, the number of page faults is significantly decreased. This demonstrates the effeciency of clock PRA.
+diff -Nur ../../OSbak/labcodes/lab3/tools/sign.c lab3/tools/sign.c
+--- ../../OSbak/labcodes/lab3/tools/sign.c	2017-02-26 17:12:48.619510661 +0800
++++ lab3/tools/sign.c	2017-03-18 17:47:05.900316619 +0800
 @@ -1,3 +1,4 @@
 +// Add a signature to the input file (must smaller than 510bytes) to make it legal for MBR
  #include <stdio.h>

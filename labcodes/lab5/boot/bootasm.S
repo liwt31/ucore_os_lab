@@ -26,7 +26,8 @@ start:
     # Enable A20:
     #  For backwards compatibility with the earliest PCs, physical
     #  address line 20 is tied low, so that addresses higher than
-    #  1MB wrap around to zero by default. This code undoes this.
+    #  1MB wrap around to zero by default. This code undoes this
+    #  No need to pay much attention to this code. Take it as a necessary preparation to enable protection mode.
 seta20.1:
     inb $0x64, %al                                  # Wait for not busy(8042 input buffer empty).
     testb $0x2, %al
@@ -66,7 +67,9 @@ finish_probe:
     # and segment translation that makes virtual addresses
     # identical to physical addresses, so that the
     # effective memory map does not change during the switch.
+    # GDT: global descriptor table.
     lgdt gdtdesc
+	# load gdt, real mode instr
     movl %cr0, %eax
     orl $CR0_PE_ON, %eax
     movl %eax, %cr0
@@ -98,10 +101,16 @@ spin:
 # Bootstrap GDT
 .p2align 2                                          # force 4 byte alignment
 gdt:
+	# Fisrt seg descriptor, left blank is requested.
     SEG_NULLASM                                     # null seg
+	# Next 2 segs are for code and data repectively
+	# The first num parameter is the starting address, and the second is the length
+	# they actually overlap and have maximum space
+	# This is for the convenience of education. The protection is weak this way.
     SEG_ASM(STA_X|STA_R, 0x0, 0xffffffff)           # code seg for bootloader and kernel
     SEG_ASM(STA_W, 0x0, 0xffffffff)                 # data seg for bootloader and kernel
 
+# Description of gdt
 gdtdesc:
     .word 0x17                                      # sizeof(gdt) - 1
     .long gdt                                       # address gdt

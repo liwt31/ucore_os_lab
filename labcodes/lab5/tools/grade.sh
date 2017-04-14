@@ -290,7 +290,7 @@ run_test() {
         fi
         args="build-$prog $defs"
     fi
-
+    
     build_run "$tag" "$args"
 
     check_result 'check result' "$check" "$@"

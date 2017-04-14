@@ -1,0 +1,995 @@
+diff -Nur /home/wtli/OS/OSbak/labcodes/lab4/boot/bootasm.S lab4/boot/bootasm.S
+--- /home/wtli/OS/OSbak/labcodes/lab4/boot/bootasm.S	2017-02-26 17:12:48.619510661 +0800
++++ lab4/boot/bootasm.S	2017-03-31 19:53:10.601739493 +0800
+@@ -26,7 +26,8 @@
+     # Enable A20:
+     #  For backwards compatibility with the earliest PCs, physical
+     #  address line 20 is tied low, so that addresses higher than
+-    #  1MB wrap around to zero by default. This code undoes this.
++    #  1MB wrap around to zero by default. This code undoes this
++    #  No need to pay much attention to this code. Take it as a necessary preparation to enable protection mode.
+ seta20.1:
+     inb $0x64, %al                                  # Wait for not busy(8042 input buffer empty).
+     testb $0x2, %al
+@@ -66,7 +67,9 @@
+     # and segment translation that makes virtual addresses
+     # identical to physical addresses, so that the
+     # effective memory map does not change during the switch.
++    # GDT: global descriptor table.
+     lgdt gdtdesc
++	# load gdt, real mode instr
+     movl %cr0, %eax
+     orl $CR0_PE_ON, %eax
+     movl %eax, %cr0
+@@ -98,10 +101,16 @@
+ # Bootstrap GDT
+ .p2align 2                                          # force 4 byte alignment
+ gdt:
++	# Fisrt seg descriptor, left blank is requested.
+     SEG_NULLASM                                     # null seg
++	# Next 2 segs are for code and data repectively
++	# The first num parameter is the starting address, and the second is the length
++	# they actually overlap and have maximum space
++	# This is for the convenience of education. The protection is weak this way.
+     SEG_ASM(STA_X|STA_R, 0x0, 0xffffffff)           # code seg for bootloader and kernel
+     SEG_ASM(STA_W, 0x0, 0xffffffff)                 # data seg for bootloader and kernel
+ 
++# Description of gdt
+ gdtdesc:
+     .word 0x17                                      # sizeof(gdt) - 1
+     .long gdt                                       # address gdt
+diff -Nur /home/wtli/OS/OSbak/labcodes/lab4/boot/bootmain.c lab4/boot/bootmain.c
+--- /home/wtli/OS/OSbak/labcodes/lab4/boot/bootmain.c	2017-02-26 17:12:48.619510661 +0800
++++ lab4/boot/bootmain.c	2017-03-31 19:53:10.601739493 +0800
+@@ -37,6 +37,7 @@
+ static void
+ waitdisk(void) {
+     while ((inb(0x1F7) & 0xC0) != 0x40)
++	// inb : assembly language, read(in) a byte(b) from a certain port
+         /* do nothing */;
+ }
+ 
+@@ -47,10 +48,12 @@
+     waitdisk();
+ 
+     outb(0x1F2, 1);                         // count = 1
++	// num of sector to read
+     outb(0x1F3, secno & 0xFF);
+     outb(0x1F4, (secno >> 8) & 0xFF);
+     outb(0x1F5, (secno >> 16) & 0xFF);
+     outb(0x1F6, ((secno >> 24) & 0xF) | 0xE0);
++	// 1F3 to 1F6, address of LBA
+     outb(0x1F7, 0x20);                      // cmd 0x20 - read sectors
+ 
+     // wait for disk to be ready
+@@ -58,6 +61,7 @@
+ 
+     // read a sector
+     insl(0x1F0, dst, SECTSIZE / 4);
++	// import double word string from port
+ }
+ 
+ /* *
+@@ -66,7 +70,8 @@
+  * */
+ static void
+ readseg(uintptr_t va, uint32_t count, uint32_t offset) {
+-    uintptr_t end_va = va + count;
++    intptr_t end_va = va + count;
++	// intptr_t : simply another name for int32_t. Why not uint32_t ?
+ 
+     // round down to sector boundary
+     va -= offset % SECTSIZE;
+@@ -87,9 +92,11 @@
+ bootmain(void) {
+     // read the 1st page off disk
+     readseg((uintptr_t)ELFHDR, SECTSIZE * 8, 0);
++	// uintptr_t uint_32.
+ 
+     // is this a valid ELF?
+     if (ELFHDR->e_magic != ELF_MAGIC) {
++	// if the reading process goes wrong, the e_magic will not be initialized properly.
+         goto bad;
+     }
+ 
+diff -Nur /home/wtli/OS/OSbak/labcodes/lab4/.check_pmm.log lab4/.check_pmm.log
+--- /home/wtli/OS/OSbak/labcodes/lab4/.check_pmm.log	1970-01-01 08:00:00.000000000 +0800
++++ lab4/.check_pmm.log	2017-03-31 19:53:10.601739493 +0800
+@@ -0,0 +1,57 @@
++(THU.CST) os is loading ...
++
++Special kernel symbols:
++  entry  0xc010002a (phys)
++  etext  0xc0105be6 (phys)
++  edata  0xc0117a36 (phys)
++  end    0xc0118968 (phys)
++Kernel executable memory footprint: 99KB
++ebp:0xc0116f48 eip:0xc0100a64 args:0x00010094 0x00010094 0xc0116f78 0xc01000ae 
++    kern/debug/kdebug.c:309: print_stackframe+21
++ebp:0xc0116f58 eip:0xc0100d75 args:0x00000000 0x00000000 0x00000000 0xc0116fc8 
++    kern/debug/kmonitor.c:129: mon_backtrace+10
++ebp:0xc0116f78 eip:0xc01000ae args:0x00000000 0xc0116fa0 0xffff0000 0xc0116fa4 
++    kern/init/init.c:49: grade_backtrace2+19
++ebp:0xc0116f98 eip:0xc01000d0 args:0x00000000 0xffff0000 0xc0116fc4 0x00000029 
++    kern/init/init.c:54: grade_backtrace1+27
++ebp:0xc0116fb8 eip:0xc01000ed args:0x00000000 0xc010002a 0xffff0000 0xc010006d 
++    kern/init/init.c:59: grade_backtrace0+19
++ebp:0xc0116fd8 eip:0xc010010e args:0x00000000 0x00000000 0x00000000 0xc0105c00 
++    kern/init/init.c:64: grade_backtrace+26
++ebp:0xc0116ff8 eip:0xc010007a args:0x00000000 0x00000000 0x0000ffff 0x40cf9a00 
++    kern/init/init.c:29: kern_init+79
++memory management: default_pmm_manager
++e820map:
++  memory: 0009fc00, [00000000, 0009fbff], type = 1.
++  memory: 00000400, [0009fc00, 0009ffff], type = 2.
++  memory: 00010000, [000f0000, 000fffff], type = 2.
++  memory: 07ee0000, [00100000, 07fdffff], type = 1.
++  memory: 00020000, [07fe0000, 07ffffff], type = 2.
++  memory: 00040000, [fffc0000, ffffffff], type = 2.
++check_alloc_page() succeeded!
++c01b9000
++check_pgdir() succeeded!
++0
++1ba007
++check_boot_pgdir() succeeded!
++-------------------- BEGIN --------------------
++PDE(0e0) c0000000-f8000000 38000000 urw
++  |-- PTE(38000) c0000000-f8000000 38000000 -rw
++PDE(001) fac00000-fb000000 00400000 -rw
++  |-- PTE(000e0) faf00000-fafe0000 000e0000 urw
++  |-- PTE(00001) fafeb000-fafec000 00001000 -rw
++--------------------- END ---------------------
++++ setup timer interrupts
++0: @ring 0
++0:  cs = 8
++0:  ds = 10
++0:  es = 10
++0:  ss = 10
+++++ switch to  user  mode +++
++100 ticks
++End of Test.
++kernel panic at kern/trap/trap.c:18:
++    EOT: kernel seems ok.
++Welcome to the kernel debug monitor!!
++Type 'help' for a list of commands.
++K> 
+\ No newline at end of file
+diff -Nur /home/wtli/OS/OSbak/labcodes/lab4/.check_swap.log lab4/.check_swap.log
+--- /home/wtli/OS/OSbak/labcodes/lab4/.check_swap.log	1970-01-01 08:00:00.000000000 +0800
++++ lab4/.check_swap.log	2017-03-31 19:53:10.601739493 +0800
+@@ -0,0 +1,98 @@
++(THU.CST) os is loading ...
++
++Special kernel symbols:
++  entry  0xc010002a (phys)
++  etext  0xc0108565 (phys)
++  edata  0xc0120a60 (phys)
++  end    0xc0121b5c (phys)
++Kernel executable memory footprint: 135KB
++ebp:0xc011ff48 eip:0xc0100a6e args:0x00010094 0x00010094 0xc011ff78 0xc01000b8 
++    kern/debug/kdebug.c:309: print_stackframe+21
++ebp:0xc011ff58 eip:0xc0100d7f args:0x00000000 0x00000000 0x00000000 0xc011ffc8 
++    kern/debug/kmonitor.c:129: mon_backtrace+10
++ebp:0xc011ff78 eip:0xc01000b8 args:0x00000000 0xc011ffa0 0xffff0000 0xc011ffa4 
++    kern/init/init.c:58: grade_backtrace2+19
++ebp:0xc011ff98 eip:0xc01000da args:0x00000000 0xffff0000 0xc011ffc4 0x0000002a 
++    kern/init/init.c:63: grade_backtrace1+27
++ebp:0xc011ffb8 eip:0xc01000f7 args:0x00000000 0xc010002a 0xffff0000 0xc010006d 
++    kern/init/init.c:68: grade_backtrace0+19
++ebp:0xc011ffd8 eip:0xc0100118 args:0x00000000 0x00000000 0x00000000 0xc0108580 
++    kern/init/init.c:73: grade_backtrace+26
++ebp:0xc011fff8 eip:0xc010007a args:0x00000000 0x00000000 0x0000ffff 0x40cf9a00 
++    kern/init/init.c:32: kern_init+79
++memory management: default_pmm_manager
++e820map:
++  memory: 0009fc00, [00000000, 0009fbff], type = 1.
++  memory: 00000400, [0009fc00, 0009ffff], type = 2.
++  memory: 00010000, [000f0000, 000fffff], type = 2.
++  memory: 07ee0000, [00100000, 07fdffff], type = 1.
++  memory: 00020000, [07fe0000, 07ffffff], type = 2.
++  memory: 00040000, [fffc0000, ffffffff], type = 2.
++check_alloc_page() succeeded!
++check_pgdir() succeeded!
++check_boot_pgdir() succeeded!
++-------------------- BEGIN --------------------
++PDE(0e0) c0000000-f8000000 38000000 urw
++  |-- PTE(38000) c0000000-f8000000 38000000 -rw
++PDE(001) fac00000-fb000000 00400000 -rw
++  |-- PTE(000e0) faf00000-fafe0000 000e0000 urw
++  |-- PTE(00001) fafeb000-fafec000 00001000 -rw
++--------------------- END ---------------------
++check_vma_struct() succeeded!
++page fault at 0x00000100: K/W [no page found].
++check_pgfault() succeeded!
++check_vmm() succeeded.
++ide 0:      10000(sectors), 'QEMU HARDDISK'.
++ide 1:     262144(sectors), 'QEMU HARDDISK'.
++SWAP: manager = fifo swap manager
++BEGIN check_swap: count 1, total 31965
++setup Page Table for vaddr 0X1000, so alloc a page
++setup Page Table vaddr 0~4MB OVER!
++set up init env for check_swap begin!
++page fault at 0x00001000: K/W [no page found].
++page fault at 0x00002000: K/W [no page found].
++page fault at 0x00003000: K/W [no page found].
++page fault at 0x00004000: K/W [no page found].
++set up init env for check_swap over!
++write Virt Page c in fifo_check_swap
++write Virt Page a in fifo_check_swap
++write Virt Page d in fifo_check_swap
++write Virt Page b in fifo_check_swap
++write Virt Page e in fifo_check_swap
++page fault at 0x00005000: K/W [no page found].
++swap_out: i 0, store page in vaddr 0x1000 to disk swap entry 2
++write Virt Page b in fifo_check_swap
++write Virt Page a in fifo_check_swap
++page fault at 0x00001000: K/W [no page found].
++swap_out: i 0, store page in vaddr 0x2000 to disk swap entry 3
++swap_in: load disk swap entry 2 with swap_page in vadr 0x1000
++write Virt Page b in fifo_check_swap
++page fault at 0x00002000: K/W [no page found].
++swap_out: i 0, store page in vaddr 0x3000 to disk swap entry 4
++swap_in: load disk swap entry 3 with swap_page in vadr 0x2000
++write Virt Page c in fifo_check_swap
++page fault at 0x00003000: K/W [no page found].
++swap_out: i 0, store page in vaddr 0x4000 to disk swap entry 5
++swap_in: load disk swap entry 4 with swap_page in vadr 0x3000
++write Virt Page d in fifo_check_swap
++page fault at 0x00004000: K/W [no page found].
++swap_out: i 0, store page in vaddr 0x5000 to disk swap entry 6
++swap_in: load disk swap entry 5 with swap_page in vadr 0x4000
++write Virt Page e in fifo_check_swap
++page fault at 0x00005000: K/W [no page found].
++swap_out: i 0, store page in vaddr 0x1000 to disk swap entry 2
++swap_in: load disk swap entry 6 with swap_page in vadr 0x5000
++write Virt Page a in fifo_check_swap
++page fault at 0x00001000: K/R [no page found].
++swap_out: i 0, store page in vaddr 0x2000 to disk swap entry 3
++swap_in: load disk swap entry 2 with swap_page in vadr 0x1000
++count is 0, total is 7
++check_swap() succeeded!
++++ setup timer interrupts
++100 ticks
++End of Test.
++kernel panic at kern/trap/trap.c:20:
++    EOT: kernel seems ok.
++Welcome to the kernel debug monitor!!
++Type 'help' for a list of commands.
++K> 
+\ No newline at end of file
+diff -Nur /home/wtli/OS/OSbak/labcodes/lab4/.check_vmm.log lab4/.check_vmm.log
+--- /home/wtli/OS/OSbak/labcodes/lab4/.check_vmm.log	1970-01-01 08:00:00.000000000 +0800
++++ lab4/.check_vmm.log	2017-04-11 20:41:40.741832699 +0800
+@@ -0,0 +1,102 @@
++(THU.CST) os is loading ...
++
++Special kernel symbols:
++  entry  0xc010002a (phys)
++  etext  0xc010964b (phys)
++  edata  0xc0124a88 (phys)
++  end    0xc0127c04 (phys)
++Kernel executable memory footprint: 159KB
++ebp:0xc0123f48 eip:0xc0100a76 args:0x00010094 0x00010094 0xc0123f78 0xc01000c0 
++    kern/debug/kdebug.c:309: print_stackframe+21
++ebp:0xc0123f58 eip:0xc0100d87 args:0x00000000 0x00000000 0x00000000 0xc0123fc8 
++    kern/debug/kmonitor.c:129: mon_backtrace+10
++ebp:0xc0123f78 eip:0xc01000c0 args:0x00000000 0xc0123fa0 0xffff0000 0xc0123fa4 
++    kern/init/init.c:58: grade_backtrace2+19
++ebp:0xc0123f98 eip:0xc01000e2 args:0x00000000 0xffff0000 0xc0123fc4 0x0000002a 
++    kern/init/init.c:63: grade_backtrace1+27
++ebp:0xc0123fb8 eip:0xc01000ff args:0x00000000 0xc010002a 0xffff0000 0xc010006d 
++    kern/init/init.c:68: grade_backtrace0+19
++ebp:0xc0123fd8 eip:0xc0100120 args:0x00000000 0x00000000 0x00000000 0xc0109660 
++    kern/init/init.c:73: grade_backtrace+26
++ebp:0xc0123ff8 eip:0xc010007a args:0x00000000 0x00000000 0x0000ffff 0x40cf9a00 
++    kern/init/init.c:33: kern_init+79
++memory management: default_pmm_manager
++e820map:
++  memory: 0009fc00, [00000000, 0009fbff], type = 1.
++  memory: 00000400, [0009fc00, 0009ffff], type = 2.
++  memory: 00010000, [000f0000, 000fffff], type = 2.
++  memory: 07ee0000, [00100000, 07fdffff], type = 1.
++  memory: 00020000, [07fe0000, 07ffffff], type = 2.
++  memory: 00040000, [fffc0000, ffffffff], type = 2.
++check_alloc_page() succeeded!
++check_pgdir() succeeded!
++check_boot_pgdir() succeeded!
++-------------------- BEGIN --------------------
++PDE(0e0) c0000000-f8000000 38000000 urw
++  |-- PTE(38000) c0000000-f8000000 38000000 -rw
++PDE(001) fac00000-fb000000 00400000 -rw
++  |-- PTE(000e0) faf00000-fafe0000 000e0000 urw
++  |-- PTE(00001) fafeb000-fafec000 00001000 -rw
++--------------------- END ---------------------
++use SLOB allocator
++kmalloc_init() succeeded!
++check_vma_struct() succeeded!
++page fault at 0x00000100: K/W [no page found].
++check_pgfault() succeeded!
++check_vmm() succeeded.
++ide 0:      10000(sectors), 'QEMU HARDDISK'.
++ide 1:     262144(sectors), 'QEMU HARDDISK'.
++SWAP: manager = fifo swap manager
++BEGIN check_swap: count 1, total 31956
++setup Page Table for vaddr 0X1000, so alloc a page
++setup Page Table vaddr 0~4MB OVER!
++set up init env for check_swap begin!
++page fault at 0x00001000: K/W [no page found].
++page fault at 0x00002000: K/W [no page found].
++page fault at 0x00003000: K/W [no page found].
++page fault at 0x00004000: K/W [no page found].
++set up init env for check_swap over!
++write Virt Page c in fifo_check_swap
++write Virt Page a in fifo_check_swap
++write Virt Page d in fifo_check_swap
++write Virt Page b in fifo_check_swap
++write Virt Page e in fifo_check_swap
++page fault at 0x00005000: K/W [no page found].
++swap_out: i 0, store page in vaddr 0x1000 to disk swap entry 2
++write Virt Page b in fifo_check_swap
++write Virt Page a in fifo_check_swap
++page fault at 0x00001000: K/W [no page found].
++swap_out: i 0, store page in vaddr 0x2000 to disk swap entry 3
++swap_in: load disk swap entry 2 with swap_page in vadr 0x1000
++write Virt Page b in fifo_check_swap
++page fault at 0x00002000: K/W [no page found].
++swap_out: i 0, store page in vaddr 0x3000 to disk swap entry 4
++swap_in: load disk swap entry 3 with swap_page in vadr 0x2000
++write Virt Page c in fifo_check_swap
++page fault at 0x00003000: K/W [no page found].
++swap_out: i 0, store page in vaddr 0x4000 to disk swap entry 5
++swap_in: load disk swap entry 4 with swap_page in vadr 0x3000
++write Virt Page d in fifo_check_swap
++page fault at 0x00004000: K/W [no page found].
++swap_out: i 0, store page in vaddr 0x5000 to disk swap entry 6
++swap_in: load disk swap entry 5 with swap_page in vadr 0x4000
++write Virt Page e in fifo_check_swap
++page fault at 0x00005000: K/W [no page found].
++swap_out: i 0, store page in vaddr 0x1000 to disk swap entry 2
++swap_in: load disk swap entry 6 with swap_page in vadr 0x5000
++write Virt Page a in fifo_check_swap
++page fault at 0x00001000: K/R [no page found].
++swap_out: i 0, store page in vaddr 0x2000 to disk swap entry 3
++swap_in: load disk swap entry 2 with swap_page in vadr 0x1000
++count is 0, total is 5
++check_swap() succeeded!
++++ setup timer interrupts
++this initproc, pid = 1, name = "init"
++To U: "Hello world!!".
++To U: "en.., Bye, Bye. :)"
++kernel panic at kern/process/proc.c:343:
++    process exit!!.
++
++Welcome to the kernel debug monitor!!
++Type 'help' for a list of commands.
++K> 
+\ No newline at end of file
+diff -Nur /home/wtli/OS/OSbak/labcodes/lab4/kern/debug/kdebug.c lab4/kern/debug/kdebug.c
+--- /home/wtli/OS/OSbak/labcodes/lab4/kern/debug/kdebug.c	2017-02-26 17:12:48.619510661 +0800
++++ lab4/kern/debug/kdebug.c	2017-03-31 19:53:10.601739493 +0800
+@@ -293,7 +293,7 @@
+  * */
+ void
+ print_stackframe(void) {
+-     /* LAB1 YOUR CODE : STEP 1 */
++     /* LAB1 2013012291 : STEP 1 */
+      /* (1) call read_ebp() to get the value of ebp. the type is (uint32_t);
+       * (2) call read_eip() to get the value of eip. the type is (uint32_t);
+       * (3) from 0 .. STACKFRAME_DEPTH
+@@ -305,5 +305,21 @@
+       *           NOTICE: the calling funciton's return addr eip  = ss:[ebp+4]
+       *                   the calling funciton's ebp = ss:[ebp]
+       */
++    uint32_t ebp = read_ebp();
++    uint32_t eip = read_eip();
++    int i;
++    for(i=0;i<STACKFRAME_DEPTH;i++){
++        if(0 == ebp) break;
++        cprintf("ebp:0x%08x eip:0x%08x ", ebp, eip);
++        cprintf("args:");
++        int j;
++        for(j=0;j<4;j++){
++            cprintf("0x%08x ",*((uint32_t*)ebp+2+j));
++        }
++        cprintf("\n");
++        print_debuginfo(eip-1);
++        eip = *((uint32_t*)ebp + 1);
++        ebp = *((uint32_t*)ebp);
++    }
+ }
+ 
+diff -Nur /home/wtli/OS/OSbak/labcodes/lab4/kern/init/init.c lab4/kern/init/init.c
+--- /home/wtli/OS/OSbak/labcodes/lab4/kern/init/init.c	2017-02-26 17:12:48.619510661 +0800
++++ lab4/kern/init/init.c	2017-04-01 09:23:30.481175873 +0800
+@@ -94,11 +94,28 @@
+ static void
+ lab1_switch_to_user(void) {
+     //LAB1 CHALLENGE 1 : TODO
++    // Make room for esp and ss
++    asm volatile ( "subl $8, %%esp \n"
++            "int %0 \n"
++    // restore esp from pushl ebp;movl esp,ebp
++            "movl %%ebp, %%esp"
++             : 
++             : "i" (T_SWITCH_TOU));
+ }
+ 
+ static void
+ lab1_switch_to_kernel(void) {
+     //LAB1 CHALLENGE 1 :  TODO
++    // It is commented in trapframe that the last 2 bytes of struct trapframe
++    // is reserved for crossing rings. As far as I am concerned, switching from
++    // user to kernel is crossing ring. So I left 2 bytes here just in case. If 
++    // it's not necessary it doesn't matter, because in the end it's what's 
++    // stores in %ebp that determines the value of %esp
++    asm volatile ( "subl $8, %%esp \n"
++            "int %0 \n"
++            "movl %%ebp, %%esp"
++             : 
++             : "i" (T_SWITCH_TOK));
+ }
+ 
+ static void
+diff -Nur /home/wtli/OS/OSbak/labcodes/lab4/kern/mm/default_pmm.c lab4/kern/mm/default_pmm.c
+--- /home/wtli/OS/OSbak/labcodes/lab4/kern/mm/default_pmm.c	2017-02-26 17:12:48.619510661 +0800
++++ lab4/kern/mm/default_pmm.c	2017-04-07 08:04:05.751012753 +0800
+@@ -9,7 +9,7 @@
+    usually split, and the remainder added to the list as another free block.
+    Please see Page 196~198, Section 8.2 of Yan Wei Min's chinese book "Data Structure -- C programming language"
+ */
+-// LAB2 EXERCISE 1: YOUR CODE
++// LAB2 EXERCISE 1: 2013012291
+ // you should rewrite functions: default_init,default_init_memmap,default_alloc_pages, default_free_pages.
+ /*
+  * Details of FFMA
+@@ -72,10 +72,10 @@
+     for (; p != base + n; p ++) {
+         assert(PageReserved(p));
+         p->flags = p->property = 0;
++        SetPageProperty(p);
+         set_page_ref(p, 0);
+     }
+     base->property = n;
+-    SetPageProperty(base);
+     nr_free += n;
+     list_add(&free_list, &(base->page_link));
+ }
+@@ -97,13 +97,17 @@
+     }
+     if (page != NULL) {
+         list_del(&(page->page_link));
+-        if (page->property > n) {
++        if (page->property > n) { // If the block is not malloced completely, 
++                                    // create a new block
+             struct Page *p = page + n;
+             p->property = page->property - n;
+             list_add(&free_list, &(p->page_link));
+-    }
++        }
++        struct Page *p = page;
++        for(; p != page + n; p ++){
++            ClearPageProperty(p);
++        }
+         nr_free -= n;
+-        ClearPageProperty(page);
+     }
+     return page;
+ }
+@@ -115,28 +119,28 @@
+     for (; p != base + n; p ++) {
+         assert(!PageReserved(p) && !PageProperty(p));
+         p->flags = 0;
++        SetPageProperty(p);
+         set_page_ref(p, 0);
+     }
+     base->property = n;
+-    SetPageProperty(base);
+     list_entry_t *le = list_next(&free_list);
+     while (le != &free_list) {
+         p = le2page(le, page_link);
+         le = list_next(le);
+         if (base + base->property == p) {
+             base->property += p->property;
+-            ClearPageProperty(p);
++			p->property = 0;
+             list_del(&(p->page_link));
+         }
+         else if (p + p->property == base) {
+             p->property += base->property;
+-            ClearPageProperty(base);
++			base->property = 0;
+             base = p;
+             list_del(&(p->page_link));
+         }
+     }
+     nr_free += n;
+-    list_add(&free_list, &(base->page_link));
++    list_add_before(&free_list, &(base->page_link));
+ }
+ 
+ static size_t
+diff -Nur /home/wtli/OS/OSbak/labcodes/lab4/kern/mm/memlayout.h lab4/kern/mm/memlayout.h
+--- /home/wtli/OS/OSbak/labcodes/lab4/kern/mm/memlayout.h	2017-02-26 17:12:48.619510661 +0800
++++ lab4/kern/mm/memlayout.h	2017-03-31 19:53:10.601739493 +0800
+@@ -123,7 +123,7 @@
+ 
+ /* free_area_t - maintains a doubly linked list to record free (unused) pages */
+ typedef struct {
+-    list_entry_t free_list;         // the list header
++    list_entry_t free_list;         // the list header, actually acts as a sentinel
+     unsigned int nr_free;           // # of free pages in this free list
+ } free_area_t;
+ 
+diff -Nur /home/wtli/OS/OSbak/labcodes/lab4/kern/mm/pmm.c lab4/kern/mm/pmm.c
+--- /home/wtli/OS/OSbak/labcodes/lab4/kern/mm/pmm.c	2017-02-26 17:12:48.619510661 +0800
++++ lab4/kern/mm/pmm.c	2017-03-31 19:53:10.601739493 +0800
+@@ -363,7 +363,7 @@
+ // return vaule: the kernel virtual address of this pte
+ pte_t *
+ get_pte(pde_t *pgdir, uintptr_t la, bool create) {
+-    /* LAB2 EXERCISE 2: YOUR CODE
++    /* LAB2 EXERCISE 2: 2013012291
+      *
+      * If you need to visit a physical address, please use KADDR()
+      * please read pmm.h for useful macros
+@@ -396,6 +396,21 @@
+     }
+     return NULL;          // (8) return page table entry
+ #endif
++    pde_t *pdep = pgdir + PDX(la);
++    if (!(*pdep & PTE_P)){
++        if (!create){
++            return NULL;
++        }
++        struct Page *page_p = alloc_page();
++        if (!page_p){
++            return NULL;
++        }
++        set_page_ref(page_p, 1);
++        uintptr_t ptp = page2pa(page_p);
++        memset(KADDR(ptp), 0, PGSIZE);
++        *pdep = (uint32_t)ptp + PTE_USER;
++    }
++    return KADDR(PDE_ADDR(*pdep) + 4 * PTX(la)); // use a constant to mimic pointer operation
+ }
+ 
+ //get_page - get related Page struct for linear address la using PDT pgdir
+@@ -416,7 +431,7 @@
+ //note: PT is changed, so the TLB need to be invalidate 
+ static inline void
+ page_remove_pte(pde_t *pgdir, uintptr_t la, pte_t *ptep) {
+-    /* LAB2 EXERCISE 3: YOUR CODE
++    /* LAB2 EXERCISE 3: 2013012291
+      *
+      * Please check if ptep is valid, and tlb must be manually updated if mapping is updated
+      *
+@@ -441,6 +456,14 @@
+                                   //(6) flush tlb
+     }
+ #endif
++    if (*ptep & PTE_P){
++        struct Page *page_p = pte2page(*ptep);
++        if (page_ref_dec(page_p) == 0){
++            free_page(page_p);
++        }
++        *ptep = 0;
++        tlb_invalidate(pgdir, la);
++    }
+ }
+ 
+ //page_remove - free an Page which is related linear address la and has an validated pte
+diff -Nur /home/wtli/OS/OSbak/labcodes/lab4/kern/mm/swap.c lab4/kern/mm/swap.c
+--- /home/wtli/OS/OSbak/labcodes/lab4/kern/mm/swap.c	2017-02-26 17:12:48.619510661 +0800
++++ lab4/kern/mm/swap.c	2017-04-01 10:11:17.766286500 +0800
+@@ -123,7 +123,7 @@
+      assert(result!=NULL);
+ 
+      pte_t *ptep = get_pte(mm->pgdir, addr, 0);
+-     // cprintf("SWAP: load ptep %x swap entry %d to vaddr 0x%08x, page %x, No %d\n", ptep, (*ptep)>>8, addr, result, (result-pages));
++     //cprintf("SWAP: load ptep %x swap entry %d to vaddr 0x%08x, page %x, No %d\n", ptep, (*ptep)>>8, addr, result, (result-pages));
+     
+      int r;
+      if ((r = swapfs_read((*ptep), result)) != 0)
+diff -Nur /home/wtli/OS/OSbak/labcodes/lab4/kern/mm/swap_fifo.c lab4/kern/mm/swap_fifo.c
+--- /home/wtli/OS/OSbak/labcodes/lab4/kern/mm/swap_fifo.c	2017-02-26 17:12:48.619510661 +0800
++++ lab4/kern/mm/swap_fifo.c	2017-03-31 20:00:15.877763723 +0800
+@@ -38,6 +38,21 @@
+      //cprintf(" mm->sm_priv %x in fifo_init_mm\n",mm->sm_priv);
+      return 0;
+ }
++static void
++print_list(list_entry_t * head){
++    if ( head == NULL){
++        extern struct mm_struct *check_mm_struct;
++        head=(list_entry_t*) check_mm_struct->sm_priv;
++    }
++    cprintf("head---> %x\n", head);
++    cprintf("head->prev---> %x\n", head->prev);
++    list_entry_t *cur = head->next;
++    while(cur != head){
++        struct Page * page = le2page(cur, pra_page_link);
++        cprintf("%x - %x - %x\n", cur, page, page->pra_vaddr);
++        cur = cur->next;
++    }
++}
+ /*
+  * (3)_fifo_map_swappable: According FIFO PRA, we should link the most recent arrival page at the back of pra_list_head qeueue
+  */
+@@ -51,6 +66,7 @@
+     //record the page access situlation
+     /*LAB3 EXERCISE 2: YOUR CODE*/ 
+     //(1)link the most recent arrival page at the back of the pra_list_head qeueue.
++    list_add_before(head, entry);
+     return 0;
+ }
+ /*
+@@ -67,14 +83,28 @@
+      /*LAB3 EXERCISE 2: YOUR CODE*/ 
+      //(1)  unlink the  earliest arrival page in front of pra_list_head qeueue
+      //(2)  set the addr of addr of this page to ptr_page
++     *ptr_page = le2page(head->next, pra_page_link);
++     list_del(head->next);
+      return 0;
+ }
+ 
++
++static void
++diag(int avoid){
++    print_list(NULL);
++    int i;
++    for (i = 0; i < 5 ; i++){
++        if (i == avoid) continue;
++        cprintf("%x, ", *(unsigned char *)((1 + i) * 0x1000));
++    }
++}
++
+ static int
+ _fifo_check_swap(void) {
+     cprintf("write Virt Page c in fifo_check_swap\n");
+     *(unsigned char *)0x3000 = 0x0c;
+     assert(pgfault_num==4);
++    assert(check_mm_struct != NULL);
+     cprintf("write Virt Page a in fifo_check_swap\n");
+     *(unsigned char *)0x1000 = 0x0a;
+     assert(pgfault_num==4);
+@@ -84,29 +114,38 @@
+     cprintf("write Virt Page b in fifo_check_swap\n");
+     *(unsigned char *)0x2000 = 0x0b;
+     assert(pgfault_num==4);
++    //diag(5);
+     cprintf("write Virt Page e in fifo_check_swap\n");
+     *(unsigned char *)0x5000 = 0x0e;
+     assert(pgfault_num==5);
++   // diag(0);
+     cprintf("write Virt Page b in fifo_check_swap\n");
+     *(unsigned char *)0x2000 = 0x0b;
+     assert(pgfault_num==5);
++    //diag(0);
+     cprintf("write Virt Page a in fifo_check_swap\n");
+     *(unsigned char *)0x1000 = 0x0a;
+     assert(pgfault_num==6);
++    //diag(1);
+     cprintf("write Virt Page b in fifo_check_swap\n");
+     *(unsigned char *)0x2000 = 0x0b;
+     assert(pgfault_num==7);
++    //diag(2);
+     cprintf("write Virt Page c in fifo_check_swap\n");
+     *(unsigned char *)0x3000 = 0x0c;
+     assert(pgfault_num==8);
++    //diag(3);
+     cprintf("write Virt Page d in fifo_check_swap\n");
+     *(unsigned char *)0x4000 = 0x0d;
+     assert(pgfault_num==9);
++    //diag(4);
+     cprintf("write Virt Page e in fifo_check_swap\n");
+     *(unsigned char *)0x5000 = 0x0e;
+     assert(pgfault_num==10);
++    //diag(1);
+     cprintf("write Virt Page a in fifo_check_swap\n");
+     assert(*(unsigned char *)0x1000 == 0x0a);
++    //diag(1);
+     *(unsigned char *)0x1000 = 0x0a;
+     assert(pgfault_num==11);
+     return 0;
+diff -Nur /home/wtli/OS/OSbak/labcodes/lab4/kern/mm/vmm.c lab4/kern/mm/vmm.c
+--- /home/wtli/OS/OSbak/labcodes/lab4/kern/mm/vmm.c	2017-02-26 17:12:48.619510661 +0800
++++ lab4/kern/mm/vmm.c	2017-03-31 20:00:09.565764303 +0800
+@@ -343,8 +343,7 @@
+ 
+     ret = -E_NO_MEM;
+ 
+-    pte_t *ptep=NULL;
+-    /*LAB3 EXERCISE 1: YOUR CODE
++    /*LAB3 EXERCISE 1: 2013012291
+     * Maybe you want help comment, BELOW comments can help you finish the code
+     *
+     * Some Useful MACROs and DEFINEs, you can use them in below implementation.
+@@ -361,15 +360,20 @@
+     *   mm->pgdir : the PDT of these vma
+     *
+     */
+-#if 0
+-    /*LAB3 EXERCISE 1: YOUR CODE*/
+-    ptep = ???              //(1) try to find a pte, if pte's PT(Page Table) isn't existed, then create a PT.
++    /*LAB3 EXERCISE 1: 2013012291*/
++    pte_t *ptep = get_pte(mm->pgdir, addr, 1);              //(1) try to find a pte, if pte's PT(Page Table) isn't existed, then create a PT.
++    if (ptep == NULL){
++        cprintf("Get pte for addr 0x%08x failed.\n", addr);
++        goto failed;
++    }
+     if (*ptep == 0) {
+-                            //(2) if the phy addr isn't exist, then alloc a page & map the phy addr with logical addr
+-
++        if (pgdir_alloc_page(mm->pgdir, addr, perm) == NULL){
++            cprintf("Alloc page for 0x%08x failed.\n", addr);
++            goto failed;
++        }
+     }
+     else {
+-    /*LAB3 EXERCISE 2: YOUR CODE
++    /*LAB3 EXERCISE 2: 2013012291
+     * Now we think this pte is a  swap entry, we should load data from disk to a page with phy addr,
+     * and map the phy addr with logical addr, trigger swap manager to record the access situation of this page.
+     *
+@@ -380,19 +384,28 @@
+     *    page_insert ： build the map of phy addr of an Page with the linear addr la
+     *    swap_map_swappable ： set the page swappable
+     */
++        //(1）According to the mm AND addr, try to load the content of right disk page
++        //    into the memory which page managed.
++        //(2) According to the mm, addr AND page, setup the map of phy addr <---> logical addr
++        //(3) make the page swappable.
+         if(swap_init_ok) {
+             struct Page *page=NULL;
+-                                    //(1）According to the mm AND addr, try to load the content of right disk page
+-                                    //    into the memory which page managed.
+-                                    //(2) According to the mm, addr AND page, setup the map of phy addr <---> logical addr
+-                                    //(3) make the page swappable.
++            swap_in(mm, addr, &page);
++            if (page != NULL) {
++                if (page_insert(mm->pgdir, page, addr, perm) != 0) {
++                    free_page(page);
++                    cprintf("Insert page 0x%08x to pte failed.\n");
++                    goto failed;
++                }
++                swap_map_swappable(mm, addr, page, 0);
++                page->pra_vaddr = addr;
++            }
+         }
+         else {
+             cprintf("no swap_init_ok but ptep is %x, failed\n",*ptep);
+             goto failed;
+         }
+    }
+-#endif
+    ret = 0;
+ failed:
+     return ret;
+diff -Nur /home/wtli/OS/OSbak/labcodes/lab4/kern/process/proc.c lab4/kern/process/proc.c
+--- /home/wtli/OS/OSbak/labcodes/lab4/kern/process/proc.c	2017-02-26 17:12:48.619510661 +0800
++++ lab4/kern/process/proc.c	2017-04-11 20:01:13.125006172 +0800
+@@ -86,7 +86,7 @@
+ alloc_proc(void) {
+     struct proc_struct *proc = kmalloc(sizeof(struct proc_struct));
+     if (proc != NULL) {
+-    //LAB4:EXERCISE1 YOUR CODE
++    //LAB4:EXERCISE1 2013012291
+     /*
+      * below fields in proc_struct need to be initialized
+      *       enum proc_state state;                      // Process state
+@@ -102,6 +102,12 @@
+      *       uint32_t flags;                             // Process flag
+      *       char name[PROC_NAME_LEN + 1];               // Process name
+      */
++        memset(proc, 0, sizeof(struct proc_struct));
++        //might not be necessary because PROC_UNINIT = 0
++        //proc->state = PROC_UNINIT; 
++        proc->pid = -1;
++        extern uintptr_t boot_cr3;
++        proc->cr3 = boot_cr3;
+     }
+     return proc;
+ }
+@@ -296,6 +302,28 @@
+     //    5. insert proc_struct into hash_list && proc_list
+     //    6. call wakeup_proc to make the new child process RUNNABLE
+     //    7. set ret vaule using child proc's pid
++    if ((proc = alloc_proc()) == NULL){
++        goto fork_out;
++    }
++	proc->parent = current;
++    if ((setup_kstack(proc)) == -E_NO_MEM){
++        goto bad_fork_cleanup_proc;
++    }
++    if (copy_mm(clone_flags, proc) != 0){
++        goto bad_fork_cleanup_kstack;
++    }
++    copy_thread(proc, stack ? stack:proc->kstack + KSTACKSIZE, tf);
++	bool intr_flag;
++	local_intr_save(intr_flag);
++	{
++		proc->pid = get_pid();
++		hash_proc(proc);
++		list_add(&proc_list, &proc->list_link);
++		nr_process ++;
++	}
++	local_intr_restore(intr_flag);
++	wakeup_proc(proc);
++    ret = proc->pid;
+ fork_out:
+     return ret;
+ 
+diff -Nur /home/wtli/OS/OSbak/labcodes/lab4/kern/trap/trap.c lab4/kern/trap/trap.c
+--- /home/wtli/OS/OSbak/labcodes/lab4/kern/trap/trap.c	2017-02-26 17:12:48.619510661 +0800
++++ lab4/kern/trap/trap.c	2017-04-11 20:41:39.041821453 +0800
+@@ -36,7 +36,7 @@
+ /* idt_init - initialize IDT to each of the entry points in kern/trap/vectors.S */
+ void
+ idt_init(void) {
+-     /* LAB1 YOUR CODE : STEP 2 */
++     /* LAB1 2013012291 : STEP 2 */
+      /* (1) Where are the entry addrs of each Interrupt Service Routine (ISR)?
+       *     All ISR's entry addrs are stored in __vectors. where is uintptr_t __vectors[] ?
+       *     __vectors[] is in kern/trap/vector.S which is produced by tools/vector.c
+@@ -48,6 +48,13 @@
+       *     You don't know the meaning of this instruction? just google it! and check the libs/x86.h to know more.
+       *     Notice: the argument of lidt is idt_pd. try to find it!
+       */
++    extern uintptr_t __vectors[];
++    int i;
++    for(i=0;i<256;i++){
++        SETGATE(idt[i], 0, GD_KTEXT, __vectors[i], DPL_KERNEL);
++    } 
++    SETGATE(idt[T_SWITCH_TOK], 0, GD_KTEXT, __vectors[T_SWITCH_TOK], DPL_USER);
++    lidt(&idt_pd);
+ }
+ 
+ static const char *
+@@ -180,12 +187,16 @@
+     LAB3 : If some page replacement algorithm(such as CLOCK PRA) need tick to change the priority of pages, 
+     then you can add code here. 
+ #endif
+-        /* LAB1 YOUR CODE : STEP 3 */
++        /* LAB1 2013012291 : STEP 3 */
+         /* handle the timer interrupt */
+         /* (1) After a timer interrupt, you should record this event using a global variable (increase it), such as ticks in kern/driver/clock.c
+          * (2) Every TICK_NUM cycle, you can print some info using a funciton, such as print_ticks().
+          * (3) Too Simple? Yes, I think so!
+          */
++        ticks++;
++        if(0 == ticks%TICK_NUM){
++            print_ticks();
++        }
+         break;
+     case IRQ_OFFSET + IRQ_COM1:
+         c = cons_getc();
+@@ -194,11 +205,26 @@
+     case IRQ_OFFSET + IRQ_KBD:
+         c = cons_getc();
+         cprintf("kbd [%03d] %c\n", c, c);
++        if ('3' == c){
++            goto t_switch_tou;
++        }
++        if ('0' == c){
++            goto t_switch_tok;
++        }
+         break;
+-    //LAB1 CHALLENGE 1 : YOUR CODE you should modify below codes.
++    //LAB1 CHALLENGE 1 : 2013012291 you should modify below codes.
+     case T_SWITCH_TOU:
++    t_switch_tou:
++        // Switch segment (also ring in cs)
++        tf->tf_cs = USER_CS;
++        tf->tf_ss = tf->tf_es = tf->tf_ds = USER_DS;
++        // enable IO in user ring
++        tf->tf_eflags |= FL_IOPL_MASK;
++        break;
+     case T_SWITCH_TOK:
+-        panic("T_SWITCH_** ??\n");
++    t_switch_tok:
++        tf->tf_cs = KERNEL_CS;
++        tf->tf_ss = tf->tf_es = tf->tf_ds = KERNEL_DS;
+         break;
+     case IRQ_OFFSET + IRQ_IDE1:
+     case IRQ_OFFSET + IRQ_IDE2:
+diff -Nur /home/wtli/OS/OSbak/labcodes/lab4/lab4-2013012291.md lab4/lab4-2013012291.md
+--- /home/wtli/OS/OSbak/labcodes/lab4/lab4-2013012291.md	1970-01-01 08:00:00.000000000 +0800
++++ lab4/lab4-2013012291.md	2017-04-11 20:39:06.440639088 +0800
+@@ -0,0 +1,73 @@
++# Lab 4
++
++## Ex1
++
++#### Implement *alloc_proc*
++
++1. Alloc memory for the PCB in the kernel using *kmalloc()*.
++2. Initialize the PCB by setting all of the contents to 0 using *memset()*. The value of the member variables of *struct proc_struct* are not set correctlly and it's not the job for this function.
++3. However, some fields could or should be initialized to be some certain value.  
++    - *proc->state* should be set to *PROC_UNINIT*, however the value of *PROC_UNINIT* is 0 so nothing should be done.
++    - *proc->pid* should be set to -1, for if the pid of the PCB is 0 then the PCB corresponds to the first process in the OS (idle process).
++    - *proc->cr3* should be set to *boot_cr3*. This is a default value for kernel processes. If process would use a different cr3, *proc->cr3* is set to a different value later.
++
++#### What are the meanings of *struct context context* and *struct trapframe \*tf* ?
++- *struct context context*
++    - the struct contains values of %eip and 7 general purpose registers (except for %eax which is used when switching context). 
++    - The contents is saved and restored when switching processes. By doing so CPU is able to change to the context of a different piece of code in *proc_run*
++- *struct trapframe \*tf*
++    - pointer to the trapframe related to the trap which causes the current kernel code to run.
++    - The pointer is set whenever a trap is entered. The struct provides essential infomation for system calls, such as values of all registers in user mode, aka arguments.
++
++#### Differences from the answer provided.
++- The answer cleared the member variables one by one instead of using memset to clear the whole struct. The effect is the same and it's hard to say which is better.
++
++## Ex2
++
++#### Implement *do_fork*
++1. Alloc the PCB. Check the return value. If it's correct, set the parent of the child process as current process.
++2. Alloc a kernel stack for the new process using *setup_kstack*. Check the return value. If it went wrong free the PCB.
++3. Alloc(copy) a user virtual memory area for the process. In this exp it does nothing because only kernel process is generated. Check the return value. If it wen wrong free the PCB and kernel stack.
++4. Setup the context of the process by calling *copy_thread*.
++    - The trapframe is basically the same with the parent process and it's stored at the bottom of kernel stack of the newly created process.
++    - The return value of the system call which is stored in %eax should be set to 0 indicating this is a child process.
++    - The %esp in the trapframe is set to 0 in *kernel_thread* for no crossing rings happens when switching to kernel processes.
++    - Enable interruption because when the process is scheduled for the first time the interruption is disabled.
++    - The context of the child process in PCB is set to be the entrance of *forkret*. The %esp in the context is set to make room for a function call to *forkrets*.
++5. Alloc a uniqe PID for the process.
++6. Add the process to process list and process hash table.
++7. Set the status of the process to be *PROC_RUNNALBE*.
++8. Set return value to be the PID of the process.
++
++#### Is Ucore able to alloc a unique PID for eash process?
++- As long as the number of processes is smaller than *MAX_PROCESS*, ucore is able to alloc a unique PID for the process.
++- The implementation is in *get_pid()*, which maintains the last PID allocated as *last_pid* and the PID from last PID to which all PIDs are available to be allocated as *next_safe*.
++- Each time the function is called, *last_pid* is increased by 1. If it reaches the maximum of PID number, it is reset to 1, and if it becomes equal to *next_safe*, find a new *next_safe*.
++    1. Reset *next_pid* to the maximum PID number.
++    2. Traverse the process list, decrease *next_pid* if any processes with PID larger than *last_pid* and smaller than *next_safe* is found.
++    3. If *last_pid* happens to be equal to one of the PID of process in the list, increase *last_pid* and start over again.
++- Otherwise the value in *last_pid* is returned as a PID number that are different from any other processes in the OS.
++
++#### Differences from the answer provided.
++- Forget to set the parent of the newly created process. Corrected now.
++- Forget to increment *nr_process*. Corrected now.
++- Doesn't tried to save and restore interruption flag. Corrected now.
++
++## Ex3
++
++#### Analysis of *proc_run*
++1. The purpose of this function is to set the argument of the function to be the current running process. 
++2. First check if the current running process is the process set to be switched to. If so, do nothing.
++3. Then prepare to block interruption and restore it later because the switching process need to be atomic. If interruption happens during the switching process, errors would occur.
++4. Set the global variable *current* to be the new the process.
++5. Set the value for kernel stack %esp in TSS. This makes sure that if the process need to switch from user stack to kernel stack it'll switch to its own kernel stack.
++6. Load the new cr3. This makes sure that the new process would find it's own physical addresses by virtual addresses potentially the same with those of other processes.
++7. call *switch_to* to save the context of the previous process and load the context of the new process.
++
++#### How many kernel threads are created in the experiment?
++- 2 kernel threads are created. 
++    1. The first one is idle process which is the thread that has been running since the entrance or even bootloading of ucore.
++    2. The second one is manually created by calling *kernel_thread*. The content of the thread is to print some message to demonstrate the system works.
++
++#### The purpose of *local_intr_save...*
++- Disable interruption temporarily to make sure that the operation in the colons are not disturbed by interruption.
+diff -Nur /home/wtli/OS/OSbak/labcodes/lab4/tools/sign.c lab4/tools/sign.c
+--- /home/wtli/OS/OSbak/labcodes/lab4/tools/sign.c	2017-02-26 17:12:48.619510661 +0800
++++ lab4/tools/sign.c	2017-03-31 19:53:10.601739493 +0800
+@@ -1,3 +1,4 @@
++// Add a signature to the input file (must smaller than 510bytes) to make it legal for MBR
+ #include <stdio.h>
+ #include <errno.h>
+ #include <string.h>
+@@ -6,11 +7,15 @@
+ int
+ main(int argc, char *argv[]) {
+     struct stat st;
++	// stat: clib to obtain status of a certain file
++	// the struct contains all kinds of info related to the file, such as size isdir and so on.
+     if (argc != 3) {
+         fprintf(stderr, "Usage: <input filename> <output filename>\n");
+         return -1;
+     }
+     if (stat(argv[1], &st) != 0) {
++		// stat function : check the status of the first parameter and copy it to the second parameter
++		// if the process is successful, return 0, else return -1
+         fprintf(stderr, "Error opening file '%s': %s\n", argv[1], strerror(errno));
+         return -1;
+     }

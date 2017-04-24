@@ -42,7 +42,7 @@ static struct pseudodesc idt_pd = {
 /* idt_init - initialize IDT to each of the entry points in kern/trap/vectors.S */
 void
 idt_init(void) {
-     /* LAB1 YOUR CODE : STEP 2 */
+     /* LAB1 2013012291 : STEP 2 */
      /* (1) Where are the entry addrs of each Interrupt Service Routine (ISR)?
       *     All ISR's entry addrs are stored in __vectors. where is uintptr_t __vectors[] ?
       *     __vectors[] is in kern/trap/vector.S which is produced by tools/vector.c
@@ -54,9 +54,17 @@ idt_init(void) {
       *     You don't know the meaning of this instruction? just google it! and check the libs/x86.h to know more.
       *     Notice: the argument of lidt is idt_pd. try to find it!
       */
-     /* LAB5 YOUR CODE */ 
+     /* LAB5 2013012291 */ 
      //you should update your lab1 code (just add ONE or TWO lines of code), let user app to use syscall to get the service of ucore
      //so you should setup the syscall interrupt gate in here
+    extern uintptr_t __vectors[];
+    int i;
+    for(i=0;i<256;i++){
+        SETGATE(idt[i], 0, GD_KTEXT, __vectors[i], DPL_KERNEL);
+    } 
+    SETGATE(idt[T_SWITCH_TOK], 0, GD_KTEXT, __vectors[T_SWITCH_TOK], DPL_USER);
+    SETGATE(idt[T_SYSCALL], 0, GD_KTEXT, __vectors[T_SYSCALL], DPL_USER);
+    lidt(&idt_pd);
 }
 
 static const char *
@@ -237,11 +245,26 @@ trap_dispatch(struct trapframe *tf) {
     case IRQ_OFFSET + IRQ_KBD:
         c = cons_getc();
         cprintf("kbd [%03d] %c\n", c, c);
+        if ('3' == c){
+            goto t_switch_tou;
+        }
+        if ('0' == c){
+            goto t_switch_tok;
+        }
         break;
-    //LAB1 CHALLENGE 1 : YOUR CODE you should modify below codes.
+    //LAB1 CHALLENGE 1 : 2013012291 you should modify below codes.
     case T_SWITCH_TOU:
+    t_switch_tou:
+        // Switch segment (also ring in cs)
+        tf->tf_cs = USER_CS;
+        tf->tf_ss = tf->tf_es = tf->tf_ds = USER_DS;
+        // enable IO in user ring
+        tf->tf_eflags |= FL_IOPL_MASK;
+        break;
     case T_SWITCH_TOK:
-        panic("T_SWITCH_** ??\n");
+    t_switch_tok:
+        tf->tf_cs = KERNEL_CS;
+        tf->tf_ss = tf->tf_es = tf->tf_ds = KERNEL_DS;
         break;
     case IRQ_OFFSET + IRQ_IDE1:
     case IRQ_OFFSET + IRQ_IDE2:

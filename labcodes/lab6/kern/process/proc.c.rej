@@ -1,0 +1,22 @@
+--- ../OSbak/labcodes/lab5/kern/process/proc.c	2017-02-26 17:12:48.619510661 +0800
++++ kern/process/proc.c	2017-04-24 19:08:36.521366604 +0800
+@@ -103,12 +103,18 @@
+      *       uint32_t flags;                             // Process flag
+      *       char name[PROC_NAME_LEN + 1];               // Process name
+      */
+-     //LAB5 YOUR CODE : (update LAB4 steps)
++     //LAB5 2013012291 : (update LAB4 steps)
+     /*
+      * below fields(add in LAB5) in proc_struct need to be initialized	
+      *       uint32_t wait_state;                        // waiting state
+      *       struct proc_struct *cptr, *yptr, *optr;     // relations between processes
+ 	 */
++        memset(proc, 0, sizeof(struct proc_struct));
++        //might not be necessary because PROC_UNINIT = 0
++        //proc->state = PROC_UNINIT; 
++        proc->pid = -1;
++        extern uintptr_t boot_cr3;
++        proc->cr3 = boot_cr3;
+     }
+     return proc;
+ }

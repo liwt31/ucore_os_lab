@@ -103,13 +103,19 @@ alloc_proc(void) {
      *       uint32_t flags;                             // Process flag
      *       char name[PROC_NAME_LEN + 1];               // Process name
      */
-     //LAB5 YOUR CODE : (update LAB4 steps)
+     //LAB5 2013012291 : (update LAB4 steps)
     /*
      * below fields(add in LAB5) in proc_struct need to be initialized	
      *       uint32_t wait_state;                        // waiting state
      *       struct proc_struct *cptr, *yptr, *optr;     // relations between processes
 	 */
-     //LAB6 YOUR CODE : (update LAB5 steps)
+        memset(proc, 0, sizeof(struct proc_struct));
+        //might not be necessary because PROC_UNINIT = 0
+        //proc->state = PROC_UNINIT; 
+        proc->pid = -1;
+        extern uintptr_t boot_cr3;
+        proc->cr3 = boot_cr3;
+     //LAB6 2013012291 : (update LAB5 steps)
     /*
      * below fields(add in LAB6) in proc_struct need to be initialized
      *     struct run_queue *rq;                       // running queue contains Process
@@ -119,6 +125,8 @@ alloc_proc(void) {
      *     uint32_t lab6_stride;                       // FOR LAB6 ONLY: the current stride of the process
      *     uint32_t lab6_priority;                     // FOR LAB6 ONLY: the priority of process, set by lab6_set_priority(uint32_t)
      */
+		proc->time_slice = MAX_TIME_SLICE;
+		list_init(&proc->run_link);
     }
     return proc;
 }

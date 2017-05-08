@@ -232,17 +232,20 @@ trap_dispatch(struct trapframe *tf) {
         /* you should upate you lab1 code (just add ONE or TWO lines of code):
          *    Every TICK_NUM cycle, you should set current process's current->need_resched = 1
          */
-        ticks++;
+        
+		ticks++;
+		
+#ifndef DEBUG_GRADE
         if(0 == ticks%TICK_NUM){
-            current->need_resched = 1;
-            //print_ticks();
+			print_ticks();
         }
+#endif
         /* LAB6 2013012291 */
         /* you should upate you lab5 code
          * IMPORTANT FUNCTIONS:
 	     * sched_class_proc_tick
          */
-        //proc_tick(current);
+		proc_tick(current);
         break;
     case IRQ_OFFSET + IRQ_COM1:
         c = cons_getc();

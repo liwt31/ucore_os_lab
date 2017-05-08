@@ -127,6 +127,7 @@ alloc_proc(void) {
      */
 		proc->time_slice = MAX_TIME_SLICE;
 		list_init(&proc->run_link);
+		proc->lab6_priority = 1;
     }
     return proc;
 }

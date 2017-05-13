@@ -1,3 +1,4 @@
+// Add a signature to the input file (must smaller than 510bytes) to make it legal for MBR
 #include <stdio.h>
 #include <errno.h>
 #include <string.h>
@@ -6,11 +7,15 @@
 int
 main(int argc, char *argv[]) {
     struct stat st;
+	// stat: clib to obtain status of a certain file
+	// the struct contains all kinds of info related to the file, such as size isdir and so on.
     if (argc != 3) {
         fprintf(stderr, "Usage: <input filename> <output filename>\n");
         return -1;
     }
     if (stat(argv[1], &st) != 0) {
+		// stat function : check the status of the first parameter and copy it to the second parameter
+		// if the process is successful, return 0, else return -1
         fprintf(stderr, "Error opening file '%s': %s\n", argv[1], strerror(errno));
         return -1;
     }

@@ -15,6 +15,7 @@
 #include <fs.h>
 #include <vfs.h>
 #include <sysfile.h>
+#include <stat.h>
 
 /* ------------- process/thread mechanism design&implementation -------------
 (an simplified Linux process/thread mechanism )
@@ -90,7 +91,7 @@ static struct proc_struct *
 alloc_proc(void) {
     struct proc_struct *proc = kmalloc(sizeof(struct proc_struct));
     if (proc != NULL) {
-    //LAB4:EXERCISE1 YOUR CODE
+    //LAB4:EXERCISE1 2013012291
     /*
      * below fields in proc_struct need to be initialized
      *       enum proc_state state;                      // Process state
@@ -106,13 +107,19 @@ alloc_proc(void) {
      *       uint32_t flags;                             // Process flag
      *       char name[PROC_NAME_LEN + 1];               // Process name
      */
-     //LAB5 YOUR CODE : (update LAB4 steps)
+     //LAB5 2013012291 : (update LAB4 steps)
     /*
      * below fields(add in LAB5) in proc_struct need to be initialized	
      *       uint32_t wait_state;                        // waiting state
      *       struct proc_struct *cptr, *yptr, *optr;     // relations between processes
 	 */
-     //LAB6 YOUR CODE : (update LAB5 steps)
+        memset(proc, 0, sizeof(struct proc_struct));
+        //might not be necessary because PROC_UNINIT = 0
+        //proc->state = PROC_UNINIT; 
+        proc->pid = -1;
+        extern uintptr_t boot_cr3;
+        proc->cr3 = boot_cr3;
+     //LAB6 2013012291 : (update LAB5 steps)
     /*
      * below fields(add in LAB6) in proc_struct need to be initialized
      *     struct run_queue *rq;                       // running queue contains Process
@@ -122,7 +129,11 @@ alloc_proc(void) {
      *     uint32_t lab6_stride;                       // FOR LAB6 ONLY: the current stride of the process
      *     uint32_t lab6_priority;                     // FOR LAB6 ONLY: the priority of process, set by lab6_set_priority(uint32_t)
      */
+		proc->time_slice = MAX_TIME_SLICE;
+		list_init(&proc->run_link);
+		proc->lab6_priority = 1;
     //LAB8:EXERCISE2 YOUR CODE HINT:need add some code to init fs in proc_struct, ...
+		proc->filesp = files_create();
     }
     return proc;
 }
@@ -427,8 +438,8 @@ do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf) {
         goto fork_out;
     }
     ret = -E_NO_MEM;
-    //LAB4:EXERCISE2 YOUR CODE
-    //LAB8:EXERCISE2 YOUR CODE  HINT:how to copy the fs in parent's proc_struct?
+    //LAB4:EXERCISE2 2013012291
+    //LAB8:EXERCISE2 2013012291 HINT:how to copy the fs in parent's proc_struct?
     /*
      * Some Useful MACROs, Functions and DEFINEs, you can use them in below implementation.
      * MACROs or Functions:
@@ -454,13 +465,38 @@ do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf) {
     //    6. call wakeup_proc to make the new child process RUNNABLE
     //    7. set ret vaule using child proc's pid
 
-	//LAB5 YOUR CODE : (update LAB4 steps)
+	//LAB5 2013012291 : (update LAB4 steps)
    /* Some Functions
     *    set_links:  set the relation links of process.  ALSO SEE: remove_links:  lean the relation links of process 
     *    -------------------
 	*    update step 1: set child proc's parent to current process, make sure current process's wait_state is 0
 	*    update step 5: insert proc_struct into hash_list && proc_list, set the relation links of process
     */
+    if ((proc = alloc_proc()) == NULL){
+        goto fork_out;
+    }
+    assert(current->wait_state == 0);
+	proc->parent = current;
+    if ((setup_kstack(proc)) == -E_NO_MEM){
+        goto bad_fork_cleanup_proc;
+    }
+    if (copy_mm(clone_flags, proc) != 0){
+        goto bad_fork_cleanup_kstack;
+    }
+	if (copy_files(clone_flags, proc) != 0){
+		goto bad_fork_cleanup_fs;
+	}
+    copy_thread(proc, stack ? stack:proc->kstack + KSTACKSIZE, tf);
+	bool intr_flag;
+	local_intr_save(intr_flag);
+	{
+		proc->pid = get_pid();
+		hash_proc(proc);
+        set_links(proc);
+	}
+	local_intr_restore(intr_flag);
+	wakeup_proc(proc);
+    ret = proc->pid;
 	
 fork_out:
     return ret;
@@ -573,6 +609,178 @@ load_icode(int fd, int argc, char **kargv) {
      * (7) setup trapframe for user environment
      * (8) if up steps failed, you should cleanup the env.
      */
+	if (current->mm != NULL) {
+        panic("load_icode: current->mm must be empty.\n");
+    }
+	
+    int ret = -E_NO_MEM;
+    struct mm_struct *mm;
+    //(1) create a new mm for current process
+    if ((mm = mm_create()) == NULL) {
+        goto bad_mm;
+    }
+    //(2) create a new PDT, and mm->pgdir= kernel virtual addr of PDT
+    if (setup_pgdir(mm) != 0) {
+        goto bad_pgdir_cleanup_mm;
+    }
+	struct stat _stat;
+	if (sysfile_fstat(fd, &_stat) != 0){
+		ret = -E_INVAL;
+		goto bad_pgdir_cleanup_mm;
+	}
+	void * binary = kmalloc(_stat.st_size);
+	if (NULL == binary) {
+		ret = -E_NO_MEM;
+		goto bad_pgdir_cleanup_mm;
+	}
+	if (load_icode_read(fd, binary, _stat.st_size, 0) < 0){
+		ret = -E_INVAL;
+		goto bad_binary_cleanup_binary;
+	}
+    //(3) copy TEXT/DATA section, build BSS parts in binary to memory space of process
+    struct Page *page;
+    //(3.1) get the file header of the bianry program (ELF format)
+    struct elfhdr *elf = (struct elfhdr *)binary;
+    //(3.2) get the entry of the program section headers of the bianry program (ELF format)
+    struct proghdr *ph = (struct proghdr *)(binary + elf->e_phoff);
+    //(3.3) This program is valid?
+    if (elf->e_magic != ELF_MAGIC) {
+        ret = -E_INVAL_ELF;
+        goto bad_elf_cleanup_pgdir;
+    }
+	
+    uint32_t vm_flags, perm;
+    struct proghdr *ph_end = ph + elf->e_phnum;
+    for (; ph < ph_end; ph ++) {
+		//(3.4) find every program section headers
+        if (ph->p_type != ELF_PT_LOAD) {
+            continue ;
+        }
+        if (ph->p_filesz > ph->p_memsz) {
+            ret = -E_INVAL_ELF;
+            goto bad_cleanup_mmap;
+        }
+        if (ph->p_filesz == 0) {
+            continue ;
+        }
+		//(3.5) call mm_map fun to setup the new vma ( ph->p_va, ph->p_memsz)
+        vm_flags = 0, perm = PTE_U;
+        if (ph->p_flags & ELF_PF_X) vm_flags |= VM_EXEC;
+        if (ph->p_flags & ELF_PF_W) vm_flags |= VM_WRITE;
+        if (ph->p_flags & ELF_PF_R) vm_flags |= VM_READ;
+        if (vm_flags & VM_WRITE) perm |= PTE_W;
+        if ((ret = mm_map(mm, ph->p_va, ph->p_memsz, vm_flags, NULL)) != 0) {
+            goto bad_cleanup_mmap;
+        }
+        unsigned char *from = binary + ph->p_offset;
+        size_t off, size;
+        uintptr_t start = ph->p_va, end, la = ROUNDDOWN(start, PGSIZE);
+	
+        ret = -E_NO_MEM;
+	
+		//(3.6) alloc memory, and  copy the contents of every program section (from, from+end) to process's memory (la, la+end)
+        end = ph->p_va + ph->p_filesz;
+		//(3.6.1) copy TEXT/DATA section of bianry program
+        while (start < end) {
+            if ((page = pgdir_alloc_page(mm->pgdir, la, perm)) == NULL) {
+                goto bad_cleanup_mmap;
+            }
+            off = start - la, size = PGSIZE - off, la += PGSIZE;
+            if (end < la) {
+                size -= la - end;
+            }
+            memcpy(page2kva(page) + off, from, size);
+            start += size, from += size;
+        }
+	
+		//(3.6.2) build BSS section of binary program
+        end = ph->p_va + ph->p_memsz;
+        if (start < la) {
+            /* ph->p_memsz == ph->p_filesz */
+            if (start == end) {
+                continue ;
+            }
+            off = start + PGSIZE - la, size = PGSIZE - off;
+            if (end < la) {
+                size -= la - end;
+            }
+            memset(page2kva(page) + off, 0, size);
+            start += size;
+            assert((end < la && start == end) || (end >= la && start == la));
+        }
+        while (start < end) {
+            if ((page = pgdir_alloc_page(mm->pgdir, la, perm)) == NULL) {
+                goto bad_cleanup_mmap;
+            }
+            off = start - la, size = PGSIZE - off, la += PGSIZE;
+            if (end < la) {
+                size -= la - end;
+            }
+            memset(page2kva(page) + off, 0, size);
+            start += size;
+        }
+    }
+    //(4) build user stack memory
+    vm_flags = VM_READ | VM_WRITE | VM_STACK;
+    if ((ret = mm_map(mm, USTACKTOP - USTACKSIZE, USTACKSIZE, vm_flags, NULL)) != 0) {
+        goto bad_cleanup_mmap;
+    }
+	uint32_t i;
+	uint32_t page_per_arg = (EXEC_MAX_ARG_LEN + 1) / PGSIZE + 
+							(0 < ((EXEC_MAX_ARG_LEN + 1) % PGSIZE));
+	uint32_t total_page = page_per_arg * argc + 3;
+	for(i = 0; i < total_page; i++){
+		assert(pgdir_alloc_page(mm->pgdir, USTACKTOP-(i+1)*PGSIZE , PTE_USER) != NULL);
+    }
+    //(5) set current process's mm, sr3, and set CR3 reg = physical addr of Page Directory
+    mm_count_inc(mm);
+    current->mm = mm;
+    current->cr3 = PADDR(mm->pgdir);
+    lcr3(PADDR(mm->pgdir));
+	
+	//(6)setup uargc and uargv in user stacks
+	for(i = 0; i < argc; i++){
+		strncpy((char *)(USTACKTOP-(i+1)*page_per_arg*PGSIZE), kargv[i], EXEC_MAX_ARG_LEN + 1);
+	}
+	uint32_t ptr_size = 4;
+	uint32_t esp = USTACKTOP - page_per_arg * argc * PGSIZE - ptr_size;
+	for(i = 0; i < argc; i++, esp -= ptr_size){
+		*(char **)esp = USTACKTOP - (argc - i) * PGSIZE;
+	}		
+	*(char ***)esp = esp + ptr_size;
+	esp -= ptr_size;
+	*(int *)esp = argc;
+	
+    //(7) setup trapframe for user environment
+    struct trapframe *tf = current->tf;
+    memset(tf, 0, sizeof(struct trapframe));
+    /* LAB5:EXERCISE1 2013012291
+     * should set tf_cs,tf_ds,tf_es,tf_ss,tf_esp,tf_eip,tf_eflags
+     * NOTICE: If we set trapframe correctly, then the user level process can return to USER MODE from kernel. So
+     *          tf_cs should be USER_CS segment (see memlayout.h)
+     *          tf_ds=tf_es=tf_ss should be USER_DS segment
+     *          tf_esp should be the top addr of user stack (USTACKTOP)
+     *          tf_eip should be the entry point of this binary program (elf->e_entry)
+     *          tf_eflags should be set to enable computer to produce Interrupt
+     */
+	tf->tf_cs = USER_CS;
+	tf->tf_ss = tf->tf_es = tf->tf_ds = USER_DS;
+	tf->tf_esp = esp;
+	tf->tf_eip = elf->e_entry;
+	tf->tf_eflags |= FL_IOPL_MASK + FL_IF;
+    ret = 0;
+out:
+    return ret;
+bad_cleanup_mmap:
+    exit_mmap(mm);
+bad_elf_cleanup_pgdir:
+    put_pgdir(mm);
+bad_binary_cleanup_binary:
+	kfree(binary);
+bad_pgdir_cleanup_mm:
+    mm_destroy(mm);
+bad_mm:
+    goto out;
 }
 
 // this function isn't very correct in LAB8
@@ -659,7 +867,7 @@ do_execve(const char *name, int argc, const char **argv) {
         }
         current->mm = NULL;
     }
-    ret= -E_NO_MEM;;
+    ret= -E_NO_MEM;
     if ((ret = load_icode(fd, argc, kargv)) != 0) {
         goto execve_exit;
     }

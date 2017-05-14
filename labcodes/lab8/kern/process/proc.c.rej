@@ -1,0 +1,42 @@
+--- ../OSbak/labcodes/lab7/kern/process/proc.c	2017-02-26 17:12:48.623510657 +0800
++++ kern/process/proc.c	2017-05-13 08:56:26.480031797 +0800
+@@ -125,6 +131,9 @@
+      *     uint32_t lab6_stride;                       // FOR LAB6 ONLY: the current stride of the process
+      *     uint32_t lab6_priority;                     // FOR LAB6 ONLY: the priority of process, set by lab6_set_priority(uint32_t)
+      */
++		proc->time_slice = MAX_TIME_SLICE;
++		list_init(&proc->run_link);
++		proc->lab6_priority = 1;
+     }
+     return proc;
+ }
+@@ -386,7 +395,7 @@
+         goto fork_out;
+     }
+     ret = -E_NO_MEM;
+-    //LAB4:EXERCISE2 YOUR CODE
++    //LAB4:EXERCISE2 2013012291
+     /*
+      * Some Useful MACROs, Functions and DEFINEs, you can use them in below implementation.
+      * MACROs or Functions:
+@@ -631,7 +662,7 @@
+     //(6) setup trapframe for user environment
+     struct trapframe *tf = current->tf;
+     memset(tf, 0, sizeof(struct trapframe));
+-    /* LAB5:EXERCISE1 YOUR CODE
++    /* LAB5:EXERCISE1 2013012291
+      * should set tf_cs,tf_ds,tf_es,tf_ss,tf_esp,tf_eip,tf_eflags
+      * NOTICE: If we set trapframe correctly, then the user level process can return to USER MODE from kernel. So
+      *          tf_cs should be USER_CS segment (see memlayout.h)
+@@ -640,6 +671,11 @@
+      *          tf_eip should be the entry point of this binary program (elf->e_entry)
+      *          tf_eflags should be set to enable computer to produce Interrupt
+      */
++	tf->tf_cs = USER_CS;
++	tf->tf_ss = tf->tf_es = tf->tf_ds = USER_DS;
++	tf->tf_esp = USTACKTOP;
++	tf->tf_eip = elf->e_entry;
++	tf->tf_eflags |= FL_IOPL_MASK + FL_IF;
+     ret = 0;
+ out:
+     return ret;

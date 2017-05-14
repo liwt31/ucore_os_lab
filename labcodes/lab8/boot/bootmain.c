@@ -37,6 +37,7 @@
 static void
 waitdisk(void) {
     while ((inb(0x1F7) & 0xC0) != 0x40)
+	// inb : assembly language, read(in) a byte(b) from a certain port
         /* do nothing */;
 }
 
@@ -47,10 +48,12 @@ readsect(void *dst, uint32_t secno) {
     waitdisk();
 
     outb(0x1F2, 1);                         // count = 1
+	// num of sector to read
     outb(0x1F3, secno & 0xFF);
     outb(0x1F4, (secno >> 8) & 0xFF);
     outb(0x1F5, (secno >> 16) & 0xFF);
     outb(0x1F6, ((secno >> 24) & 0xF) | 0xE0);
+	// 1F3 to 1F6, address of LBA
     outb(0x1F7, 0x20);                      // cmd 0x20 - read sectors
 
     // wait for disk to be ready
@@ -58,6 +61,7 @@ readsect(void *dst, uint32_t secno) {
 
     // read a sector
     insl(0x1F0, dst, SECTSIZE / 4);
+	// import double word string from port
 }
 
 /* *
@@ -66,7 +70,8 @@ readsect(void *dst, uint32_t secno) {
  * */
 static void
 readseg(uintptr_t va, uint32_t count, uint32_t offset) {
-    uintptr_t end_va = va + count;
+    intptr_t end_va = va + count;
+	// intptr_t : simply another name for int32_t. Why not uint32_t ?
 
     // round down to sector boundary
     va -= offset % SECTSIZE;
@@ -87,9 +92,11 @@ void
 bootmain(void) {
     // read the 1st page off disk
     readseg((uintptr_t)ELFHDR, SECTSIZE * 8, 0);
+	// uintptr_t uint_32.
 
     // is this a valid ELF?
     if (ELFHDR->e_magic != ELF_MAGIC) {
+	// if the reading process goes wrong, the e_magic will not be initialized properly.
         goto bad;
     }
 

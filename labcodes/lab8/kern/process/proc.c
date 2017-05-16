@@ -725,6 +725,7 @@ load_icode(int fd, int argc, char **kargv) {
     if ((ret = mm_map(mm, USTACKTOP - USTACKSIZE, USTACKSIZE, vm_flags, NULL)) != 0) {
         goto bad_cleanup_mmap;
     }
+	kfree(binary);
 	uint32_t i;
 	uint32_t page_per_arg = (EXEC_MAX_ARG_LEN + 1) / PGSIZE + 
 							(0 < ((EXEC_MAX_ARG_LEN + 1) % PGSIZE));
